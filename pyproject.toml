@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "code-extract"
+version = "0.2.0"
+description = "Extract, clean, and export code blocks from any codebase"
+requires-python = ">=3.10"
+dependencies = ["click>=8.0"]
+
+[project.optional-dependencies]
+format = ["black>=23.0"]
+treesitter = [
+    "tree-sitter>=0.24",
+    "tree-sitter-language-pack>=0.13",
+]
+web = [
+    "fastapi>=0.100",
+    "uvicorn[standard]>=0.20",
+]
+all = [
+    "code-extract[format,treesitter,web]",
+]
+dev = [
+    "pytest>=7.0",
+    "black>=23.0",
+    "httpx>=0.25",
+    "code-extract[all]",
+]
+
+[project.scripts]
+code-extract = "code_extract.cli:cli"
+
+[tool.setuptools.packages.find]
+include = ["code_extract*"]
+
+[tool.setuptools.package-data]
+"code_extract.web" = ["static/**"]

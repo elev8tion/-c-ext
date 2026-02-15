@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>code-extract</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: { extend: { colors: {
+        surface: { DEFAULT: '#0f1117', 100: '#161822', 200: '#1e2030' },
+        accent: '#6366f1',
+      }}}
+    }
+  </script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body class="bg-surface text-gray-200 h-screen flex flex-col overflow-hidden">
+
+  <!-- Header -->
+  <header class="flex items-center justify-between px-6 py-3 border-b border-gray-800 shrink-0">
+    <div class="flex items-center gap-3">
+      <span class="text-lg font-bold text-white tracking-tight">code-extract</span>
+      <span class="text-xs px-2 py-0.5 rounded bg-accent/20 text-indigo-300">v0.2</span>
+    </div>
+    <div class="flex items-center gap-4 text-xs text-gray-500">
+      <span id="status-text">Ready</span>
+    </div>
+  </header>
+
+  <!-- Main layout -->
+  <div class="flex flex-1 overflow-hidden">
+
+    <!-- Sidebar -->
+    <aside class="w-64 border-r border-gray-800 flex flex-col shrink-0">
+      <div class="p-4 space-y-3">
+        <label class="text-xs font-medium text-gray-400 uppercase tracking-wider">Project Path</label>
+        <div class="relative">
+          <input id="path-input" type="text" placeholder="~/my-project"
+            class="w-full px-3 py-2 bg-surface-200 border border-gray-700 rounded-lg text-sm focus:outline-none focus:border-accent"
+            autocomplete="off">
+          <div id="autocomplete-dropdown" class="autocomplete-dropdown hidden"></div>
+        </div>
+        <button id="scan-btn" onclick="app.scan()"
+          class="w-full py-2 bg-accent hover:bg-indigo-500 text-white text-sm font-medium rounded-lg transition">
+          Scan
+        </button>
+      </div>
+
+      <!-- Filters -->
+      <div class="px-4 pb-3 space-y-2">
+        <label class="text-xs font-medium text-gray-400 uppercase tracking-wider">Filters</label>
+        <select id="filter-language" onchange="app.applyFilters()"
+          class="w-full px-2 py-1.5 bg-surface-200 border border-gray-700 rounded text-xs">
+          <option value="">All Languages</option>
+        </select>
+        <select id="filter-type" onchange="app.applyFilters()"
+          class="w-full px-2 py-1.5 bg-surface-200 border border-gray-700 rounded text-xs">
+          <option value="">All Types</option>
+        </select>
+        <input id="filter-search" type="text" placeholder="Search names..." oninput="app.applyFilters()"
+          class="w-full px-2 py-1.5 bg-surface-200 border border-gray-700 rounded text-xs">
+      </div>
+
+      <!-- Recent Scans -->
+      <div class="flex-1 overflow-y-auto px-4 pb-4">
+        <label class="text-xs font-medium text-gray-400 uppercase tracking-wider">Recent Scans</label>
+        <div id="recent-scans" class="mt-2 space-y-1 text-xs"></div>
+      </div>
+    </aside>
+
+    <!-- Main content -->
+    <main class="flex-1 flex flex-col overflow-hidden">
+      <!-- Toolbar -->
+      <div class="flex items-center gap-3 px-4 py-2 border-b border-gray-800 text-xs shrink-0">
+        <label class="flex items-center gap-1.5 text-gray-400">
+          <input type="checkbox" id="select-all" onchange="app.toggleAll(this.checked)"
+            class="rounded bg-surface-200 border-gray-600">
+          Select All
+        </label>
+        <span id="item-count" class="text-gray-500">0 items</span>
+        <div class="flex-1"></div>
+        <span id="scan-dir" class="text-gray-600 truncate max-w-md"></span>
+      </div>
+
+      <!-- Results table -->
+      <div id="results" class="flex-1 overflow-y-auto">
+        <div id="empty-state" class="flex items-center justify-center h-full text-gray-600">
+          <div class="text-center space-y-2">
+            <div class="text-4xl">{ }</div>
+            <p>Enter a project path and click Scan</p>
+          </div>
+        </div>
+        <table id="results-table" class="w-full text-sm hidden">
+          <tbody id="results-body"></tbody>
+        </table>
+      </div>
+    </main>
+
+    <!-- Preview panel -->
+    <aside id="preview-panel" class="w-[420px] border-l border-gray-800 flex-col hidden shrink-0">
+      <div class="flex items-center justify-between px-4 py-2 border-b border-gray-800">
+        <div>
+          <span id="preview-name" class="font-medium text-sm"></span>
+          <span id="preview-badge" class="ml-2 text-xs px-1.5 py-0.5 rounded"></span>
+        </div>
+        <button onclick="app.closePreview()" class="text-gray-500 hover:text-white text-lg">&times;</button>
+      </div>
+      <div class="flex-1 overflow-auto p-4">
+        <pre><code id="preview-code" class="text-xs"></code></pre>
+      </div>
+    </aside>
+  </div>
+
+  <!-- Action bar -->
+  <footer class="flex items-center gap-4 px-6 py-3 border-t border-gray-800 shrink-0">
+    <span id="selected-count" class="text-sm text-gray-400">0 selected</span>
+    <button id="extract-btn" onclick="app.extract()" disabled
+      class="px-4 py-1.5 bg-green-600 hover:bg-green-500 disabled:bg-gray-700 disabled:text-gray-500 text-white text-sm rounded-lg transition">
+      Extract
+    </button>
+    <div class="flex-1">
+      <div id="progress-bar" class="h-1.5 bg-gray-800 rounded-full overflow-hidden hidden">
+        <div id="progress-fill" class="h-full bg-accent transition-all duration-300" style="width:0%"></div>
+      </div>
+      <span id="progress-text" class="text-xs text-gray-500 hidden"></span>
+    </div>
+    <a id="download-link" class="hidden px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg transition cursor-pointer">
+      Download ZIP
+    </a>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>

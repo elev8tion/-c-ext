@@ -1,0 +1,71 @@
+/* code-extract dark theme styles */
+
+/* Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0f1117;
+}
+::-webkit-scrollbar-thumb {
+  background: #2d3048;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3d4060;
+}
+
+/* Autocomplete dropdown */
+.autocomplete-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  max-height: 200px;
+  overflow-y: auto;
+  background: #1e2030;
+  border: 1px solid #374151;
+  border-radius: 0.5rem;
+  margin-top: 2px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+}
+
+/* Preview panel transition */
+#preview-panel {
+  transition: width 0.2s ease;
+}
+
+/* Code block styling */
+pre code {
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+/* Row hover effect */
+.result-row:hover td {
+  background: rgba(30, 32, 48, 0.5);
+}
+
+/* Checkbox styling */
+input[type="checkbox"] {
+  accent-color: #6366f1;
+}
+
+/* Disable state */
+button:disabled {
+  cursor: not-allowed;
+}
+
+/* Recent scan item */
+.recent-item:hover {
+  color: #d1d5db;
+}
+
+/* File group header */
+tr.bg-surface-100 {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
