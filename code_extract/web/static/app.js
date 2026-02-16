@@ -5,7 +5,6 @@ const app = (() => {
   let allItems = [];
   let filteredItems = [];
   let selectedIds = new Set();
-  let ws = null;
   let activeTab = 'scan';
   const tabLoaded = {};    // track which tabs have loaded data
   let catalogData = null;
@@ -132,6 +131,20 @@ const app = (() => {
   // SCAN
   // ═══════════════════════════════════════════════
 
+  async function waitForExtraction(scanId, maxWait = 60000) {
+    const start = Date.now();
+    while (Date.now() - start < maxWait) {
+      try {
+        const res = await fetch(`/api/scan/${scanId}/status`);
+        if (res.ok) {
+          const info = await res.json();
+          if (info.status === 'ready') return;
+        }
+      } catch (_) { /* ignore network blips */ }
+      await new Promise(r => setTimeout(r, 500));
+    }
+  }
+
   async function scan() {
     const path = pathInput.value.trim();
     if (!path) return;
@@ -162,8 +175,12 @@ const app = (() => {
       saveRecentScan(path, data.scan_id, data.count);
       populateFilters();
       applyFilters();
-      setStatus(`Found ${data.count} items`);
+      setStatus(`Found ${data.count} items — extracting blocks...`);
       $('#scan-dir').textContent = data.source_dir;
+
+      // Wait for background extraction to finish
+      await waitForExtraction(data.scan_id);
+      setStatus(`Found ${data.count} items — ready`);
 
       // If on a non-scan tab, trigger its data load
       if (activeTab !== 'scan') {
@@ -332,55 +349,8 @@ const app = (() => {
 
   async function extract() {
     if (selectedIds.size === 0 || !currentScan) return;
-
-    const progressBar = $('#progress-bar');
-    const progressFill = $('#progress-fill');
-    const progressText = $('#progress-text');
-    const downloadLink = $('#download-link');
-
-    progressBar.classList.remove('hidden');
-    progressText.classList.remove('hidden');
-    downloadLink.classList.add('hidden');
-
-    const wsUrl = `ws://${location.host}/api/ws/progress`;
-    try {
-      ws = new WebSocket(wsUrl);
-      ws.onmessage = (e) => {
-        const msg = JSON.parse(e.data);
-        if (msg.stage === 'done') {
-          progressFill.style.width = '100%';
-          progressText.textContent = `Done! ${msg.files_created} files`;
-          downloadLink.href = msg.download_url;
-          downloadLink.classList.remove('hidden');
-          ws.close();
-        } else if (msg.error) {
-          progressText.textContent = `Error: ${msg.error}`;
-        } else {
-          const pct = msg.total > 0 ? Math.round((msg.current / msg.total) * 100) : 0;
-          progressFill.style.width = `${pct}%`;
-          progressText.textContent = `${msg.stage}: ${msg.current}/${msg.total}`;
-        }
-      };
-      ws.onopen = () => {
-        ws.send(JSON.stringify({
-          action: 'extract',
-          scan_id: currentScan.scan_id,
-          item_ids: [...selectedIds],
-        }));
-      };
-      ws.onerror = () => extractHTTP();
-    } catch {
-      extractHTTP();
-    }
-  }
-
-  async function extractHTTP() {
-    const progressFill = $('#progress-fill');
-    const progressText = $('#progress-text');
-    const downloadLink = $('#download-link');
-
-    progressFill.style.width = '50%';
-    progressText.textContent = 'Extracting...';
+    setStatus('Extracting...');
+    showProgress();
 
     try {
       const res = await fetch('/api/extract', {
@@ -391,15 +361,14 @@ const app = (() => {
           item_ids: [...selectedIds],
         }),
       });
-      if (!res.ok) throw new Error('Extract failed');
+      if (!res.ok) throw new Error((await res.json()).detail || 'Extract failed');
       const data = await res.json();
-      progressFill.style.width = '100%';
-      progressText.textContent = `Done! ${data.files_created} files`;
-      downloadLink.href = data.download_url;
-      downloadLink.classList.remove('hidden');
+      setStatus(`Extracted ${data.files_created} files`);
+      showDownload(data.download_url);
     } catch (err) {
-      progressText.textContent = `Error: ${err.message}`;
+      setStatus(`Error: ${err.message}`);
     }
+    hideProgress();
   }
 
   // ═══════════════════════════════════════════════
@@ -701,7 +670,7 @@ const app = (() => {
 
   function toggleDocsWatch(enabled) {
     if (enabled && currentScan) {
-      const wsUrl = `ws://${location.host}/api/ws/docs-watch`;
+      const wsUrl = `ws://${location.host}/api/docs/ws/docs-watch`;
       docsWs = new WebSocket(wsUrl);
       docsWs.onopen = () => {
         docsWs.send(JSON.stringify({ scan_id: currentScan.scan_id }));
