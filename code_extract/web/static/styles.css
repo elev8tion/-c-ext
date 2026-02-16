@@ -16,19 +16,16 @@
   background: #3d4060;
 }
 
-/* Autocomplete dropdown */
+/* Autocomplete dropdown — positioned to the right of sidebar */
 .autocomplete-dropdown {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
+  position: fixed;
   z-index: 50;
-  max-height: 200px;
+  max-height: 240px;
+  width: 220px;
   overflow-y: auto;
   background: #1e2030;
   border: 1px solid #374151;
   border-radius: 0.5rem;
-  margin-top: 2px;
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
 }
 

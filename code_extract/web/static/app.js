@@ -105,9 +105,14 @@ const app = (() => {
         const res = await fetch(`/api/autocomplete?q=${encodeURIComponent(q)}`);
         const data = await res.json();
         if (data.suggestions.length === 0) { dropdown.classList.add('hidden'); return; }
-        dropdown.innerHTML = data.suggestions.map(s =>
-          `<div class="ac-item px-3 py-1.5 hover:bg-surface-200 cursor-pointer text-xs truncate" data-path="${s}">${s}</div>`
-        ).join('');
+        dropdown.innerHTML = data.suggestions.map(s => {
+          const name = s.split('/').filter(Boolean).pop() || s;
+          return `<div class="ac-item px-3 py-1.5 hover:bg-surface-200 cursor-pointer text-sm truncate" data-path="${s}" title="${s}">📁 ${name}</div>`;
+        }).join('');
+        // Position dropdown to the right of the input
+        const rect = pathInput.getBoundingClientRect();
+        dropdown.style.left = (rect.right + 6) + 'px';
+        dropdown.style.top = rect.top + 'px';
         dropdown.classList.remove('hidden');
         dropdown.querySelectorAll('.ac-item').forEach(el => {
           el.addEventListener('click', () => {
