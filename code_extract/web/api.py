@@ -15,10 +15,9 @@ from pydantic import BaseModel
 
 from code_extract.models import PipelineConfig
 from code_extract.pipeline import run_pipeline, run_scan
-from code_extract.web.state import AppState, ExportSession, ScanSession
+from code_extract.web.state import ExportSession, ScanSession, state
 
 router = APIRouter(prefix="/api")
-state = AppState()
 
 
 # --- Request / Response models ---
@@ -47,6 +46,29 @@ def _validate_path(p: str) -> Path:
 
 # --- Endpoints ---
 
+def _background_extract(scan_id: str, items: list) -> None:
+    """Extract all items and store blocks in state for analysis features."""
+    from code_extract.extractor import extract_item
+
+    scan = state.scans.get(scan_id)
+    if scan:
+        scan.status = "extracting"
+
+    blocks: dict = {}
+    for item in items:
+        try:
+            block = extract_item(item)
+            key = f"{item.file_path}:{item.line_number}"
+            blocks[key] = block
+        except Exception:
+            pass
+
+    state.store_blocks(scan_id, blocks)
+
+    if scan:
+        scan.status = "ready"
+
+
 @router.post("/scan")
 async def scan_directory(req: ScanRequest):
     source = _validate_path(req.path)
@@ -56,8 +78,11 @@ async def scan_directory(req: ScanRequest):
     config = PipelineConfig(source_dir=source)
     items = await asyncio.to_thread(run_scan, config)
 
-    session = ScanSession(source_dir=str(source), items=items)
+    session = ScanSession(source_dir=str(source), items=items, status="extracting")
     state.add_scan(session)
+
+    # Fire background extraction for analysis features
+    asyncio.get_event_loop().run_in_executor(None, _background_extract, session.id, items)
 
     return {
         "scan_id": session.id,
@@ -77,6 +102,20 @@ async def scan_directory(req: ScanRequest):
             }
             for item in items
         ],
+    }
+
+
+@router.get("/scan/{scan_id}/status")
+async def scan_status(scan_id: str):
+    scan = state.scans.get(scan_id)
+    if not scan:
+        raise HTTPException(404, "Scan not found")
+    blocks = state.get_blocks_for_scan(scan_id)
+    return {
+        "scan_id": scan_id,
+        "status": scan.status,
+        "items_count": len(scan.items),
+        "blocks_extracted": len(blocks) if blocks else 0,
     }
 
 

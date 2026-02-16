@@ -58,6 +58,29 @@ The web dashboard lets you:
 - Select items and extract them as a downloadable zip
 - Real-time progress via WebSocket
 
+### v0.3 Analysis Tabs
+
+The web UI includes 8 tabs:
+
+| Tab | What it does |
+|-----|-------------|
+| **Scan** | Scan projects, browse/filter/preview items, extract to zip |
+| **Catalog** | Card grid of all components with parameters, language badges, code previews |
+| **Architecture** | Mermaid.js diagram of module dependencies, clickable module list |
+| **Health** | Long functions, code duplication detection, coupling scores, overall health score |
+| **Docs** | Auto-generated documentation from AST data, Watch Mode for live updates, markdown export |
+| **Compare** | Semantic diff between two codebases — added/removed/modified items |
+| **Dead Code** | Detect unused code with confidence scoring and entry-point heuristics |
+| **Tour** | Step-by-step codebase walkthrough from entry points through dependency chains |
+
+### Smart Tools
+
+- **Smart Extract** — Extract items with all transitive dependencies resolved
+- **Package Factory** — Generate ready-to-publish packages with language-appropriate manifests
+- **Pattern Cloner** — Clone code patterns with intelligent case-variant name replacement
+- **Boilerplate Generator** — Detect repeated patterns and generate reusable templates
+- **Migration Mapper** — Detect and apply migration patterns (React class→hooks, Flutter StatefulWidget→Riverpod, etc.)
+
 ## Output Structure
 
 ```

@@ -16,6 +16,7 @@
   </script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body class="bg-surface text-gray-200 h-screen flex flex-col overflow-hidden">
@@ -24,7 +25,7 @@
   <header class="flex items-center justify-between px-6 py-3 border-b border-gray-800 shrink-0">
     <div class="flex items-center gap-3">
       <span class="text-lg font-bold text-white tracking-tight">code-extract</span>
-      <span class="text-xs px-2 py-0.5 rounded bg-accent/20 text-indigo-300">v0.2</span>
+      <span class="text-xs px-2 py-0.5 rounded bg-accent/20 text-indigo-300">v0.3</span>
     </div>
     <div class="flex items-center gap-4 text-xs text-gray-500">
       <span id="status-text">Ready</span>
@@ -50,8 +51,8 @@
         </button>
       </div>
 
-      <!-- Filters -->
-      <div class="px-4 pb-3 space-y-2">
+      <!-- Filters (for Scan tab) -->
+      <div id="sidebar-filters" class="px-4 pb-3 space-y-2">
         <label class="text-xs font-medium text-gray-400 uppercase tracking-wider">Filters</label>
         <select id="filter-language" onchange="app.applyFilters()"
           class="w-full px-2 py-1.5 bg-surface-200 border border-gray-700 rounded text-xs">
@@ -74,30 +75,203 @@
 
     <!-- Main content -->
     <main class="flex-1 flex flex-col overflow-hidden">
-      <!-- Toolbar -->
-      <div class="flex items-center gap-3 px-4 py-2 border-b border-gray-800 text-xs shrink-0">
-        <label class="flex items-center gap-1.5 text-gray-400">
-          <input type="checkbox" id="select-all" onchange="app.toggleAll(this.checked)"
-            class="rounded bg-surface-200 border-gray-600">
-          Select All
-        </label>
-        <span id="item-count" class="text-gray-500">0 items</span>
-        <div class="flex-1"></div>
-        <span id="scan-dir" class="text-gray-600 truncate max-w-md"></span>
+
+      <!-- Tab bar -->
+      <div class="tab-bar flex items-center gap-1 px-4 py-1.5 border-b border-gray-800 shrink-0 overflow-x-auto">
+        <button class="tab-btn active" data-tab="scan" onclick="app.switchTab('scan')">Scan</button>
+        <button class="tab-btn" data-tab="catalog" onclick="app.switchTab('catalog')">Catalog</button>
+        <button class="tab-btn" data-tab="architecture" onclick="app.switchTab('architecture')">Architecture</button>
+        <button class="tab-btn" data-tab="health" onclick="app.switchTab('health')">Health</button>
+        <button class="tab-btn" data-tab="docs" onclick="app.switchTab('docs')">Docs</button>
+        <button class="tab-btn" data-tab="compare" onclick="app.switchTab('compare')">Compare</button>
+        <button class="tab-btn" data-tab="deadcode" onclick="app.switchTab('deadcode')">Dead Code</button>
+        <button class="tab-btn" data-tab="tour" onclick="app.switchTab('tour')">Tour</button>
       </div>
 
-      <!-- Results table -->
-      <div id="results" class="flex-1 overflow-y-auto">
-        <div id="empty-state" class="flex items-center justify-center h-full text-gray-600">
-          <div class="text-center space-y-2">
-            <div class="text-4xl">{ }</div>
-            <p>Enter a project path and click Scan</p>
+      <!-- ═══ Tab: Scan ═══ -->
+      <div id="tab-scan" class="tab-panel active flex flex-col flex-1 overflow-hidden">
+        <div class="flex items-center gap-3 px-4 py-2 border-b border-gray-800 text-xs shrink-0">
+          <label class="flex items-center gap-1.5 text-gray-400">
+            <input type="checkbox" id="select-all" onchange="app.toggleAll(this.checked)"
+              class="rounded bg-surface-200 border-gray-600">
+            Select All
+          </label>
+          <span id="item-count" class="text-gray-500">0 items</span>
+          <div class="flex-1"></div>
+          <span id="scan-dir" class="text-gray-600 truncate max-w-md"></span>
+        </div>
+        <div id="results" class="flex-1 overflow-y-auto">
+          <div id="empty-state" class="flex items-center justify-center h-full text-gray-600">
+            <div class="text-center space-y-2">
+              <div class="text-4xl">{ }</div>
+              <p>Enter a project path and click Scan</p>
+            </div>
+          </div>
+          <table id="results-table" class="w-full text-sm hidden">
+            <tbody id="results-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ═══ Tab: Catalog ═══ -->
+      <div id="tab-catalog" class="tab-panel flex-1 overflow-y-auto p-6 hidden">
+        <div id="catalog-empty" class="tab-empty-state">
+          <p class="text-gray-500">Scan a project first to build the component catalog</p>
+        </div>
+        <div id="catalog-content" class="hidden">
+          <div class="flex items-center gap-4 mb-4">
+            <h2 class="text-lg font-semibold text-white">Component Catalog</h2>
+            <input id="catalog-search" type="text" placeholder="Search components..."
+              class="px-3 py-1.5 bg-surface-200 border border-gray-700 rounded text-xs w-64" oninput="app.filterCatalog()">
+            <select id="catalog-lang-filter" class="px-2 py-1.5 bg-surface-200 border border-gray-700 rounded text-xs" onchange="app.filterCatalog()">
+              <option value="">All Languages</option>
+            </select>
+            <div class="flex-1"></div>
+            <button onclick="app.exportCatalogHTML()" class="px-3 py-1.5 bg-surface-200 border border-gray-700 rounded text-xs hover:bg-surface-100">Export HTML</button>
+          </div>
+          <div id="catalog-grid" class="card-grid"></div>
+        </div>
+      </div>
+
+      <!-- ═══ Tab: Architecture ═══ -->
+      <div id="tab-architecture" class="tab-panel flex-1 overflow-hidden hidden">
+        <div id="arch-empty" class="tab-empty-state">
+          <p class="text-gray-500">Scan a project first to view architecture</p>
+        </div>
+        <div id="arch-content" class="hidden flex h-full">
+          <div class="w-[60%] overflow-auto p-4 border-r border-gray-800">
+            <div class="flex items-center justify-between mb-3">
+              <h2 class="text-lg font-semibold text-white">Architecture Diagram</h2>
+              <button onclick="app.exportArchSVG()" class="px-3 py-1.5 bg-surface-200 border border-gray-700 rounded text-xs hover:bg-surface-100">Export SVG</button>
+            </div>
+            <div id="arch-diagram" class="mermaid-container"></div>
+          </div>
+          <div class="w-[40%] overflow-y-auto p-4">
+            <h3 class="text-sm font-semibold text-gray-300 mb-3">Modules</h3>
+            <div id="arch-modules"></div>
           </div>
         </div>
-        <table id="results-table" class="w-full text-sm hidden">
-          <tbody id="results-body"></tbody>
-        </table>
       </div>
+
+      <!-- ═══ Tab: Health ═══ -->
+      <div id="tab-health" class="tab-panel flex-1 overflow-y-auto p-6 hidden">
+        <div id="health-empty" class="tab-empty-state">
+          <p class="text-gray-500">Scan a project first to view health metrics</p>
+        </div>
+        <div id="health-content" class="hidden">
+          <div class="flex items-center gap-4 mb-6">
+            <h2 class="text-lg font-semibold text-white">Refactoring Radar</h2>
+            <div id="health-score" class="metric-card-inline"></div>
+          </div>
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div>
+              <h3 class="text-sm font-semibold text-gray-300 mb-3">Long Functions</h3>
+              <div id="health-long-fns" class="space-y-2"></div>
+            </div>
+            <div>
+              <h3 class="text-sm font-semibold text-gray-300 mb-3">Duplications</h3>
+              <div id="health-duplicates" class="space-y-2"></div>
+            </div>
+            <div>
+              <h3 class="text-sm font-semibold text-gray-300 mb-3">Coupling</h3>
+              <div id="health-coupling" class="space-y-2"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══ Tab: Docs ═══ -->
+      <div id="tab-docs" class="tab-panel flex-1 overflow-y-auto p-6 hidden">
+        <div id="docs-empty" class="tab-empty-state">
+          <p class="text-gray-500">Scan a project first to generate documentation</p>
+        </div>
+        <div id="docs-content" class="hidden">
+          <div class="flex items-center gap-4 mb-4">
+            <h2 class="text-lg font-semibold text-white">Living Documentation</h2>
+            <label class="flex items-center gap-2 text-xs text-gray-400">
+              <input type="checkbox" id="docs-watch-toggle" onchange="app.toggleDocsWatch(this.checked)"
+                class="rounded bg-surface-200 border-gray-600">
+              Watch Mode
+            </label>
+            <span id="docs-live-indicator" class="hidden text-xs text-green-400 flex items-center gap-1">
+              <span class="w-2 h-2 rounded-full bg-green-400 animate-pulse inline-block"></span> Live
+            </span>
+            <div class="flex-1"></div>
+            <button onclick="app.exportDocsMarkdown()" class="px-3 py-1.5 bg-surface-200 border border-gray-700 rounded text-xs hover:bg-surface-100">Export Markdown</button>
+          </div>
+          <div id="docs-body"></div>
+        </div>
+      </div>
+
+      <!-- ═══ Tab: Compare ═══ -->
+      <div id="tab-compare" class="tab-panel flex-1 overflow-y-auto p-6 hidden">
+        <div class="flex items-center gap-4 mb-4">
+          <h2 class="text-lg font-semibold text-white">Semantic Diff</h2>
+        </div>
+        <div class="flex gap-4 mb-4">
+          <div class="flex-1">
+            <label class="text-xs text-gray-400 mb-1 block">Source Path (Before)</label>
+            <input id="diff-path-a" type="text" placeholder="~/project-v1"
+              class="w-full px-3 py-2 bg-surface-200 border border-gray-700 rounded-lg text-sm">
+          </div>
+          <div class="flex-1">
+            <label class="text-xs text-gray-400 mb-1 block">Target Path (After)</label>
+            <input id="diff-path-b" type="text" placeholder="~/project-v2"
+              class="w-full px-3 py-2 bg-surface-200 border border-gray-700 rounded-lg text-sm">
+          </div>
+          <button onclick="app.runDiff()" class="self-end px-4 py-2 bg-accent hover:bg-indigo-500 text-white text-sm rounded-lg">Compare</button>
+        </div>
+        <div id="diff-summary" class="hidden mb-4"></div>
+        <div id="diff-results"></div>
+      </div>
+
+      <!-- ═══ Tab: Dead Code ═══ -->
+      <div id="tab-deadcode" class="tab-panel flex-1 overflow-y-auto p-6 hidden">
+        <div id="deadcode-empty" class="tab-empty-state">
+          <p class="text-gray-500">Scan a project first to detect dead code</p>
+        </div>
+        <div id="deadcode-content" class="hidden">
+          <div class="flex items-center gap-4 mb-4">
+            <h2 class="text-lg font-semibold text-white">Dead Code Detector</h2>
+            <span id="deadcode-count" class="text-xs text-gray-500"></span>
+          </div>
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-xs text-gray-500 border-b border-gray-800">
+                <th class="text-left px-3 py-2">Name</th>
+                <th class="text-left px-3 py-2">Type</th>
+                <th class="text-left px-3 py-2">File</th>
+                <th class="text-left px-3 py-2">Confidence</th>
+                <th class="text-left px-3 py-2">Reason</th>
+              </tr>
+            </thead>
+            <tbody id="deadcode-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ═══ Tab: Tour ═══ -->
+      <div id="tab-tour" class="tab-panel flex-1 overflow-hidden hidden">
+        <div id="tour-empty" class="tab-empty-state">
+          <p class="text-gray-500">Scan a project first to generate a codebase tour</p>
+        </div>
+        <div id="tour-content" class="hidden flex h-full">
+          <div class="w-48 border-r border-gray-800 overflow-y-auto p-3">
+            <h3 class="text-xs font-semibold text-gray-400 uppercase mb-2">Steps</h3>
+            <div id="tour-step-list" class="space-y-1"></div>
+          </div>
+          <div class="flex-1 overflow-y-auto p-6">
+            <div id="tour-step-content"></div>
+            <div class="flex items-center gap-3 mt-6">
+              <button id="tour-prev" onclick="app.tourPrev()" class="px-3 py-1.5 bg-surface-200 border border-gray-700 rounded text-xs hover:bg-surface-100" disabled>Previous</button>
+              <button id="tour-next" onclick="app.tourNext()" class="px-3 py-1.5 bg-accent hover:bg-indigo-500 text-white rounded text-xs">Next</button>
+              <div class="flex-1"></div>
+              <button onclick="app.exportTourMarkdown()" class="px-3 py-1.5 bg-surface-200 border border-gray-700 rounded text-xs hover:bg-surface-100">Export Markdown</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
     </main>
 
     <!-- Preview panel -->
@@ -121,6 +295,14 @@
     <button id="extract-btn" onclick="app.extract()" disabled
       class="px-4 py-1.5 bg-green-600 hover:bg-green-500 disabled:bg-gray-700 disabled:text-gray-500 text-white text-sm rounded-lg transition">
       Extract
+    </button>
+    <button id="smart-extract-btn" onclick="app.smartExtract()" disabled
+      class="px-4 py-1.5 bg-purple-600 hover:bg-purple-500 disabled:bg-gray-700 disabled:text-gray-500 text-white text-sm rounded-lg transition">
+      Extract with Deps
+    </button>
+    <button id="package-btn" onclick="app.createPackage()" disabled
+      class="px-4 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:bg-gray-700 disabled:text-gray-500 text-white text-sm rounded-lg transition">
+      Create Package
     </button>
     <div class="flex-1">
       <div id="progress-bar" class="h-1.5 bg-gray-800 rounded-full overflow-hidden hidden">

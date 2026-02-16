@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "code-extract"
-version = "0.2.0"
+version = "0.3.0"
 description = "Extract, clean, and export code blocks from any codebase"
 requires-python = ">=3.10"
 dependencies = ["click>=8.0"]
@@ -18,6 +18,7 @@ treesitter = [
 web = [
     "fastapi>=0.100",
     "uvicorn[standard]>=0.20",
+    "watchfiles>=0.20",
 ]
 all = [
     "code-extract[format,treesitter,web]",

@@ -1,0 +1,532 @@
+# MODULE_MANIFEST.yaml — Internal project documentation for code-extract
+# Every module is documented here for future extension and maintenance.
+# Updated: v0.3.0
+
+project:
+  name: code-extract
+  version: "0.3.0"
+  description: "Extract, analyze, and export code blocks from any codebase"
+
+modules:
+
+  # ── Core Models ──────────────────────────────────────────────
+  code_extract/__init__.py:
+    purpose: Package root, exposes __version__
+    dependencies: []
+    cautions:
+      - Version string must match pyproject.toml and web app.py
+    extension_points: []
+
+  code_extract/models.py:
+    purpose: All pipeline dataclasses — ScannedItem, ExtractedBlock, CleanedBlock, FormattedBlock, ExportResult, PipelineConfig
+    dependencies: []
+    cautions:
+      - ScannedItem.qualified_name is used as the universal identifier across graph/analysis
+      - ExtractedBlock.type_references and .imports are the inputs to the dependency graph
+      - Adding new CodeBlockType values requires updating scanner + extractor + formatter
+    extension_points:
+      - Add new Language enum values for new language support
+      - Add new CodeBlockType values for new block kinds
+
+  code_extract/pipeline.py:
+    purpose: 5-stage pipeline orchestrator — scan, filter, extract, clean, format, export
+    dependencies:
+      - code_extract.models
+      - code_extract.scanner
+      - code_extract.extractor
+      - code_extract.cleaner
+      - code_extract.formatter
+      - code_extract.exporter
+    cautions:
+      - run_scan() is called by the web API; changing its signature breaks the web UI
+      - _filter_items supports target, pattern, and extract_all modes
+    extension_points:
+      - Add new filter strategies in _filter_items()
+      - Add progress callbacks per stage
+
+  # ── Scanner Layer ────────────────────────────────────────────
+  code_extract/scanner/__init__.py:
+    purpose: Scanner registry — dispatches to Python AST, tree-sitter, or regex scanners
+    dependencies:
+      - code_extract.scanner.python_scanner
+      - code_extract.scanner.js_scanner
+      - code_extract.scanner.dart_scanner
+      - code_extract.scanner.treesitter_scanner (optional)
+      - code_extract.scanner.sql_scanner (optional)
+    cautions:
+      - scan_directory() is the public API; all scanners must return list[ScannedItem]
+      - Tree-sitter is optional; regex fallbacks exist for JS and Dart only
+    extension_points:
+      - Add new scanner class and register in _get_scanners()
+
+  code_extract/scanner/base.py:
+    purpose: Abstract base class for all scanners
+    dependencies: [code_extract.models]
+    cautions:
+      - scan_file() and scan_directory() are the required interface
+    extension_points:
+      - Subclass for new language scanners
+
+  code_extract/scanner/python_scanner.py:
+    purpose: Python scanner using stdlib ast module
+    dependencies: [code_extract.scanner.base, code_extract.models]
+    cautions: []
+    extension_points: []
+
+  code_extract/scanner/js_scanner.py:
+    purpose: JavaScript/TypeScript regex fallback scanner
+    dependencies: [code_extract.scanner.base, code_extract.models]
+    cautions:
+      - Only used when tree-sitter is not installed
+    extension_points: []
+
+  code_extract/scanner/dart_scanner.py:
+    purpose: Dart/Flutter regex fallback scanner
+    dependencies: [code_extract.scanner.base, code_extract.models]
+    cautions:
+      - Only used when tree-sitter is not installed
+    extension_points: []
+
+  code_extract/scanner/treesitter_scanner.py:
+    purpose: AST-accurate scanner for 12+ languages via tree-sitter
+    dependencies:
+      - tree-sitter
+      - tree-sitter-language-pack
+      - code_extract.scanner.base
+      - code_extract.scanner.language_map
+    cautions:
+      - Optional dependency; entire module skipped if not installed
+      - language_map.py maps file extensions to tree-sitter language names
+    extension_points:
+      - Add language support by extending language_map and query patterns
+
+  code_extract/scanner/sql_scanner.py:
+    purpose: SQL scanner using regex for CREATE TABLE/VIEW/FUNCTION etc.
+    dependencies: [code_extract.scanner.base, code_extract.models]
+    cautions: []
+    extension_points: []
+
+  code_extract/scanner/language_map.py:
+    purpose: Maps file extensions to Language enum and tree-sitter grammar names
+    dependencies: [code_extract.models]
+    cautions: []
+    extension_points:
+      - Add new extension mappings for new languages
+
+  # ── Extractor Layer ──────────────────────────────────────────
+  code_extract/extractor/__init__.py:
+    purpose: Extractor registry — routes ScannedItem to correct extractor
+    dependencies:
+      - code_extract.extractor.python_extractor
+      - code_extract.extractor.js_extractor
+      - code_extract.extractor.dart_extractor
+      - code_extract.extractor.treesitter_extractor (optional)
+      - code_extract.extractor.sql_extractor (optional)
+    cautions:
+      - extract_item() is the public API
+      - Returns ExtractedBlock with imports and type_references populated
+    extension_points:
+      - Register new extractors in _EXTRACTORS or _FALLBACK_EXTRACTORS
+
+  code_extract/extractor/base.py:
+    purpose: Abstract base class for extractors
+    dependencies: [code_extract.models]
+    cautions: []
+    extension_points: []
+
+  code_extract/extractor/python_extractor.py:
+    purpose: Python extractor using stdlib ast
+    dependencies: [code_extract.extractor.base, code_extract.models]
+    cautions: []
+    extension_points: []
+
+  code_extract/extractor/js_extractor.py:
+    purpose: JavaScript/TypeScript regex fallback extractor
+    dependencies: [code_extract.extractor.base, code_extract.models]
+    cautions: []
+    extension_points: []
+
+  code_extract/extractor/dart_extractor.py:
+    purpose: Dart extractor with brace matching
+    dependencies: [code_extract.extractor.base, code_extract.models]
+    cautions: []
+    extension_points: []
+
+  code_extract/extractor/treesitter_extractor.py:
+    purpose: Tree-sitter based extractor for all supported languages
+    dependencies: [tree-sitter, tree-sitter-language-pack]
+    cautions:
+      - Optional dependency
+    extension_points: []
+
+  code_extract/extractor/sql_extractor.py:
+    purpose: SQL statement extractor
+    dependencies: [code_extract.extractor.base, code_extract.models]
+    cautions: []
+    extension_points: []
+
+  # ── Cleaner Layer ────────────────────────────────────────────
+  code_extract/cleaner/__init__.py:
+    purpose: Cleaner orchestrator — runs strip_metadata, clean_imports, sanitize_references
+    dependencies:
+      - code_extract.cleaner.import_cleaner
+      - code_extract.cleaner.metadata_stripper
+      - code_extract.cleaner.reference_sanitizer
+    cautions:
+      - clean_block() is the public API
+    extension_points:
+      - Add new cleaning stages between existing ones
+
+  code_extract/cleaner/import_cleaner.py:
+    purpose: Remove unused imports from extracted code
+    dependencies: []
+    cautions: []
+    extension_points: []
+
+  code_extract/cleaner/metadata_stripper.py:
+    purpose: Strip metadata comments and annotations
+    dependencies: []
+    cautions: []
+    extension_points: []
+
+  code_extract/cleaner/reference_sanitizer.py:
+    purpose: Sanitize relative imports and references
+    dependencies: []
+    cautions: []
+    extension_points: []
+
+  # ── Formatter Layer ──────────────────────────────────────────
+  code_extract/formatter/__init__.py:
+    purpose: Formatter registry — dispatches to language-specific formatters
+    dependencies:
+      - code_extract.formatter.python_formatter
+      - code_extract.formatter.js_formatter
+      - code_extract.formatter.dart_formatter
+      - code_extract.formatter.generic_formatter
+      - code_extract.formatter.sql_formatter (optional)
+    cautions:
+      - format_block() is the public API
+    extension_points:
+      - Register new formatters in _FORMATTERS dict
+
+  # ── Exporter Layer ───────────────────────────────────────────
+  code_extract/exporter/__init__.py:
+    purpose: Exporter registry — export_blocks, generate_manifest, generate_readme
+    dependencies:
+      - code_extract.exporter.folder_exporter
+      - code_extract.exporter.manifest_generator
+      - code_extract.exporter.readme_generator
+    cautions:
+      - export_blocks() creates language subdirectories and writes files
+    extension_points:
+      - Add new export formats (e.g. package_exporter for micro-packages)
+
+  code_extract/exporter/folder_exporter.py:
+    purpose: Write formatted blocks to language-organized folder structure
+    dependencies: [code_extract.models]
+    cautions: []
+    extension_points: []
+
+  code_extract/exporter/manifest_generator.py:
+    purpose: Generate manifest.json with item metadata
+    dependencies: [code_extract.models]
+    cautions: []
+    extension_points: []
+
+  code_extract/exporter/readme_generator.py:
+    purpose: Generate README.md for exported code
+    dependencies: [code_extract.models]
+    cautions: []
+    extension_points: []
+
+  code_extract/exporter/package_exporter.py:
+    purpose: "Micro-Package Factory — generate publishable packages (package.json, pubspec.yaml, etc.)"
+    dependencies:
+      - code_extract.models
+      - code_extract.analysis.dependency_graph
+    cautions:
+      - Must handle all supported languages for manifest generation
+    extension_points:
+      - Add new language manifest templates
+
+  # ── Web Layer ────────────────────────────────────────────────
+  code_extract/web/__init__.py:
+    purpose: Web package init, exposes create_app
+    dependencies: [code_extract.web.app]
+    cautions: []
+    extension_points: []
+
+  code_extract/web/app.py:
+    purpose: FastAPI application factory — mounts routers and static files
+    dependencies:
+      - fastapi
+      - code_extract.web.api
+      - code_extract.web.api_analysis
+      - code_extract.web.api_catalog
+      - code_extract.web.api_diff
+      - code_extract.web.api_docs
+      - code_extract.web.api_tour
+      - code_extract.web.api_tools
+    cautions:
+      - Router include order matters — static files must be mounted last
+      - Version string must match __init__.py
+    extension_points:
+      - Include new API routers before static mount
+
+  code_extract/web/state.py:
+    purpose: In-memory state shared by all API routes — scans, exports, blocks, analysis caches
+    dependencies: [code_extract.models]
+    cautions:
+      - Single AppState instance shared across all routers via import
+      - _block_index stores ExtractedBlocks keyed by item_id for analysis
+      - analyses dict caches analysis results per scan
+    extension_points:
+      - Add new cache dicts for new analysis types
+
+  code_extract/web/api.py:
+    purpose: Core API routes — scan, extract, preview, autocomplete, websocket progress
+    dependencies:
+      - fastapi
+      - code_extract.pipeline
+      - code_extract.web.state
+    cautions:
+      - After scan, triggers background extraction to populate block_index
+      - _validate_path restricts to home directory
+    extension_points:
+      - Add new endpoints for new features
+
+  code_extract/web/api_analysis.py:
+    purpose: Analysis API — dependency graph, transitive deps, smart extract, dead code, architecture, health
+    dependencies:
+      - fastapi
+      - code_extract.web.state
+      - code_extract.analysis.dependency_graph
+      - code_extract.analysis.dead_code
+      - code_extract.analysis.architecture
+      - code_extract.analysis.health
+    cautions:
+      - All endpoints require a completed scan with extracted blocks
+    extension_points:
+      - Add new analysis endpoints
+
+  code_extract/web/api_catalog.py:
+    purpose: Component catalog API — build and retrieve catalogs
+    dependencies:
+      - fastapi
+      - code_extract.web.state
+      - code_extract.analysis.catalog
+    cautions: []
+    extension_points: []
+
+  code_extract/web/api_diff.py:
+    purpose: Semantic diff API — compare two codebases
+    dependencies:
+      - fastapi
+      - code_extract.analysis.diff
+    cautions:
+      - Runs two independent scans; can be slow on large codebases
+    extension_points: []
+
+  code_extract/web/api_docs.py:
+    purpose: Living documentation API — auto-generate docs, watch mode via WebSocket
+    dependencies:
+      - fastapi
+      - code_extract.web.state
+      - code_extract.analysis.docs
+      - watchfiles (optional)
+    cautions:
+      - WebSocket watch mode requires watchfiles package
+    extension_points: []
+
+  code_extract/web/api_tour.py:
+    purpose: Codebase tour API — generate step-by-step walkthroughs
+    dependencies:
+      - fastapi
+      - code_extract.web.state
+      - code_extract.analysis.tour
+    cautions: []
+    extension_points: []
+
+  code_extract/web/api_tools.py:
+    purpose: Smart tools API — package factory, pattern cloner, boilerplate, migration
+    dependencies:
+      - fastapi
+      - code_extract.web.state
+      - code_extract.exporter.package_exporter
+      - code_extract.analysis.pattern_cloner
+      - code_extract.analysis.boilerplate
+      - code_extract.analysis.migration
+    cautions: []
+    extension_points:
+      - Add new tool endpoints
+
+  # ── Analysis Layer ───────────────────────────────────────────
+  code_extract/analysis/__init__.py:
+    purpose: Analysis package init
+    dependencies: []
+    cautions: []
+    extension_points: []
+
+  code_extract/analysis/graph_models.py:
+    purpose: Dataclasses for dependency graph — DependencyNode, DependencyEdge, DependencyGraph, TransitiveDeps
+    dependencies: []
+    cautions:
+      - DependencyGraph.forward and .reverse adjacency dicts are the core navigation structures
+      - name_index maps item names to item_ids for cross-referencing
+    extension_points:
+      - Add new edge types for new relationship kinds
+
+  code_extract/analysis/dependency_graph.py:
+    purpose: DependencyGraphBuilder — builds graph from ExtractedBlocks, resolves transitive deps, detects cycles
+    dependencies:
+      - code_extract.models
+      - code_extract.analysis.graph_models
+    cautions:
+      - This is the foundation for 7+ features — changes here affect everything
+      - BFS for transitive deps; cycles detected during traversal
+    extension_points:
+      - Add new edge-building strategies for new relationship types
+
+  code_extract/analysis/dead_code.py:
+    purpose: Dead code detector — finds items with zero reverse dependencies
+    dependencies:
+      - code_extract.analysis.graph_models
+    cautions:
+      - Confidence scoring must account for entry points and public APIs
+    extension_points:
+      - Add new heuristics for entry point detection
+
+  code_extract/analysis/architecture.py:
+    purpose: Architecture snapshot — groups items by directory, generates Mermaid diagrams
+    dependencies:
+      - code_extract.analysis.graph_models
+    cautions: []
+    extension_points:
+      - Add new diagram layouts
+
+  code_extract/analysis/health.py:
+    purpose: Refactoring radar — long functions, duplication detection, coupling scores
+    dependencies:
+      - code_extract.models
+      - code_extract.analysis.graph_models
+    cautions:
+      - Duplication uses fuzzy token-bag Jaccard; threshold 0.75
+    extension_points:
+      - Add new health metrics
+
+  code_extract/analysis/catalog.py:
+    purpose: Component catalog — extract function parameters and constructor params from AST
+    dependencies:
+      - code_extract.models
+    cautions: []
+    extension_points: []
+
+  code_extract/analysis/diff.py:
+    purpose: Semantic diff — compare two codebases by matching items on name+type+language
+    dependencies:
+      - code_extract.models
+      - code_extract.pipeline
+    cautions:
+      - Scans both directories independently
+    extension_points: []
+
+  code_extract/analysis/docs.py:
+    purpose: Living documentation generator — auto-docs from AST data
+    dependencies:
+      - code_extract.models
+    cautions: []
+    extension_points: []
+
+  code_extract/analysis/tour.py:
+    purpose: Codebase tour generator — traces import chains from entry points
+    dependencies:
+      - code_extract.models
+      - code_extract.analysis.graph_models
+    cautions: []
+    extension_points: []
+
+  code_extract/analysis/pattern_cloner.py:
+    purpose: Pattern cloner — intelligent case-variant name replacement
+    dependencies:
+      - code_extract.models
+    cautions:
+      - Must handle PascalCase, camelCase, snake_case, UPPER_SNAKE
+    extension_points: []
+
+  code_extract/analysis/boilerplate.py:
+    purpose: Boilerplate generator — detect repeated patterns and templatize
+    dependencies:
+      - code_extract.models
+    cautions: []
+    extension_points: []
+
+  code_extract/analysis/migration.py:
+    purpose: Migration mapper — detect and apply known migration patterns
+    dependencies:
+      - code_extract.models
+    cautions:
+      - Pattern detection is heuristic; may produce false positives
+    extension_points:
+      - Add new migration pattern definitions
+
+  # ── Web Static Assets ────────────────────────────────────────
+  code_extract/web/static/index.html:
+    purpose: Main web UI — tab bar with 8 tab panels
+    dependencies: [tailwindcss CDN, highlight.js CDN, mermaid.js CDN]
+    cautions:
+      - Tab IDs must match app.js switchTab() function
+    extension_points:
+      - Add new tab panels
+
+  code_extract/web/static/app.js:
+    purpose: Web UI logic — tab switching, scan, filter, preview, all tab renderers
+    dependencies: [index.html, styles.css]
+    cautions:
+      - Each tab has a lazy-load function triggered on first switch
+      - currentScan must be set before any tab can load data
+    extension_points:
+      - Add new tab load/render functions
+
+  code_extract/web/static/styles.css:
+    purpose: Dark theme styles — tabs, cards, metrics, diffs, tour steps
+    dependencies: []
+    cautions: []
+    extension_points:
+      - Add new component styles
+
+  # ── CLI ──────────────────────────────────────────────────────
+  code_extract/cli.py:
+    purpose: Click CLI — scan, extract, serve commands
+    dependencies:
+      - click
+      - code_extract.pipeline
+      - code_extract.web (optional)
+    cautions:
+      - serve command requires [web] optional deps
+    extension_points:
+      - Add new CLI commands
+
+  # ── Tests ────────────────────────────────────────────────────
+  tests/test_pipeline.py:
+    purpose: Full pipeline integration tests
+    dependencies: [code_extract.pipeline, tests.fixtures]
+    cautions: []
+    extension_points: []
+
+  tests/test_scanner.py:
+    purpose: Scanner layer tests
+    dependencies: [code_extract.scanner, tests.fixtures]
+    cautions: []
+    extension_points: []
+
+  tests/test_treesitter_scanner.py:
+    purpose: Tree-sitter specific tests (skipped if not installed)
+    dependencies: [code_extract.scanner.treesitter_scanner, tests.fixtures]
+    cautions: []
+    extension_points: []
+
+  tests/test_web_api.py:
+    purpose: Web API endpoint tests
+    dependencies: [fastapi.testclient, httpx, code_extract.web]
+    cautions: []
+    extension_points: []
