@@ -19,11 +19,16 @@ class BuildRequest(BaseModel):
 
 @router.post("/build")
 async def build(req: BuildRequest):
+    cached = state.get_analysis(req.scan_id, "catalog")
+    if cached:
+        return {"scan_id": req.scan_id, "items": cached}
+
     blocks = state.get_blocks_for_scan(req.scan_id)
     if not blocks:
         raise HTTPException(400, "No extracted blocks available. Scan may still be processing.")
 
     items = await asyncio.to_thread(build_catalog, blocks)
+    state.store_analysis(req.scan_id, "catalog", items)
     return {"scan_id": req.scan_id, "items": items}
 
 

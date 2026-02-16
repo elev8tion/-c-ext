@@ -16,8 +16,10 @@ class ScanSession:
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     source_dir: str = ""
     items: list[ScannedItem] = field(default_factory=list)
-    status: str = "ready"  # scanning → extracting → ready
+    status: str = "ready"  # scanning → extracting → analyzing → ready
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+    blocks_done: int = 0  # incremental progress counter
+    analyses_ready: list[str] = field(default_factory=list)  # which analyses are done
 
 
 @dataclass
@@ -68,6 +70,35 @@ class AppState:
 
     def get_analysis(self, scan_id: str, name: str) -> Any | None:
         return self._analyses.get(scan_id, {}).get(name)
+
+    def delete_scan(self, scan_id: str) -> bool:
+        """Remove a scan and all associated data (blocks, analyses, exports)."""
+        scan = self.scans.pop(scan_id, None)
+        if not scan:
+            return False
+
+        # Remove items from global index
+        for item in scan.items:
+            key = f"{item.file_path}:{item.line_number}"
+            self._item_index.pop(key, None)
+
+        # Remove extracted blocks
+        self._block_index.pop(scan_id, None)
+
+        # Remove cached analyses
+        self._analyses.pop(scan_id, None)
+
+        # Remove exports linked to this scan and clean up zip files
+        expired = [eid for eid, exp in self.exports.items() if exp.scan_id == scan_id]
+        for eid in expired:
+            exp = self.exports.pop(eid)
+            if exp.zip_path and exp.zip_path.exists():
+                try:
+                    exp.zip_path.unlink()
+                except OSError:
+                    pass
+
+        return True
 
 
 # Module-level singleton — all routers import this

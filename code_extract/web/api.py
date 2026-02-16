@@ -46,27 +46,110 @@ def _validate_path(p: str) -> Path:
 
 # --- Endpoints ---
 
-def _background_extract(scan_id: str, items: list) -> None:
-    """Extract all items and store blocks in state for analysis features."""
+def _background_extract_and_analyze(scan_id: str, items: list) -> None:
+    """Extract all items, then pre-build all analyses in background."""
     from code_extract.extractor import extract_item
 
     scan = state.scans.get(scan_id)
-    if scan:
-        scan.status = "extracting"
+    if not scan:
+        return
+
+    # ── Phase 1: Extract blocks (with incremental progress) ──
+    scan.status = "extracting"
+    scan.blocks_done = 0
+
+    # Group items by file to read each file only once
+    by_file: dict[str, list] = {}
+    for item in items:
+        by_file.setdefault(str(item.file_path), []).append(item)
 
     blocks: dict = {}
-    for item in items:
-        try:
-            block = extract_item(item)
-            key = f"{item.file_path}:{item.line_number}"
-            blocks[key] = block
-        except Exception:
-            pass
+    for file_items in by_file.values():
+        for item in file_items:
+            try:
+                block = extract_item(item)
+                key = f"{item.file_path}:{item.line_number}"
+                blocks[key] = block
+            except Exception:
+                pass
+            scan.blocks_done = len(blocks)
 
     state.store_blocks(scan_id, blocks)
 
-    if scan:
-        scan.status = "ready"
+    # ── Phase 2: Pre-build all analyses ──
+    scan.status = "analyzing"
+
+    try:
+        from code_extract.analysis.dependency_graph import DependencyGraphBuilder
+        builder = DependencyGraphBuilder()
+        graph = builder.build(blocks)
+        state.store_analysis(scan_id, "graph", graph)
+        scan.analyses_ready.append("graph")
+    except Exception:
+        pass
+
+    # These all depend on graph/blocks — run them and cache
+    analysis_jobs = [
+        ("catalog", lambda: _build_catalog(scan_id, blocks)),
+        ("architecture", lambda: _build_architecture(scan_id, scan.source_dir)),
+        ("health", lambda: _build_health(scan_id, blocks)),
+        ("deadcode", lambda: _build_deadcode(scan_id)),
+        ("docs", lambda: _build_docs(scan_id, blocks)),
+        ("tour", lambda: _build_tour(scan_id, blocks)),
+    ]
+
+    for name, job in analysis_jobs:
+        try:
+            job()
+            scan.analyses_ready.append(name)
+        except Exception:
+            pass
+
+    scan.status = "ready"
+
+
+def _build_catalog(scan_id: str, blocks: dict) -> None:
+    from code_extract.analysis.catalog import build_catalog
+    items = build_catalog(blocks)
+    state.store_analysis(scan_id, "catalog", items)
+
+
+def _build_architecture(scan_id: str, source_dir: str) -> None:
+    from code_extract.analysis.architecture import generate_architecture
+    graph = state.get_analysis(scan_id, "graph")
+    if graph:
+        result = generate_architecture(graph, source_dir)
+        state.store_analysis(scan_id, "architecture", result)
+
+
+def _build_health(scan_id: str, blocks: dict) -> None:
+    from code_extract.analysis.health import analyze_health
+    graph = state.get_analysis(scan_id, "graph")
+    if graph:
+        result = analyze_health(blocks, graph)
+        state.store_analysis(scan_id, "health", result)
+
+
+def _build_deadcode(scan_id: str) -> None:
+    from code_extract.analysis.dead_code import detect_dead_code
+    graph = state.get_analysis(scan_id, "graph")
+    if graph:
+        items = detect_dead_code(graph)
+        state.store_analysis(scan_id, "deadcode", items)
+
+
+def _build_docs(scan_id: str, blocks: dict) -> None:
+    from code_extract.analysis.docs import generate_docs
+    result = generate_docs(blocks)
+    state.store_analysis(scan_id, "docs", result)
+
+
+def _build_tour(scan_id: str, blocks: dict) -> None:
+    from code_extract.analysis.tour import generate_tour
+    graph = state.get_analysis(scan_id, "graph")
+    if graph:
+        result = generate_tour(blocks, graph)
+        state.store_analysis(scan_id, "tour", result)
 
 
 @router.post("/scan")
@@ -81,8 +164,8 @@ async def scan_directory(req: ScanRequest):
     session = ScanSession(source_dir=str(source), items=items, status="extracting")
     state.add_scan(session)
 
-    # Fire background extraction for analysis features
-    asyncio.get_event_loop().run_in_executor(None, _background_extract, session.id, items)
+    # Fire background extraction + analysis pipeline
+    asyncio.get_event_loop().run_in_executor(None, _background_extract_and_analyze, session.id, items)
 
     return {
         "scan_id": session.id,
@@ -105,6 +188,31 @@ async def scan_directory(req: ScanRequest):
     }
 
 
+@router.get("/scans")
+async def list_scans():
+    """List all scans in memory."""
+    return {
+        "scans": [
+            {
+                "scan_id": s.id,
+                "source_dir": s.source_dir,
+                "items_count": len(s.items),
+                "status": s.status,
+                "timestamp": s.timestamp,
+            }
+            for s in state.scans.values()
+        ]
+    }
+
+
+@router.delete("/scan/{scan_id}")
+async def delete_scan(scan_id: str):
+    """Delete a scan and all associated data."""
+    if not state.delete_scan(scan_id):
+        raise HTTPException(404, "Scan not found")
+    return {"deleted": scan_id}
+
+
 @router.get("/scan/{scan_id}/status")
 async def scan_status(scan_id: str):
     scan = state.scans.get(scan_id)
@@ -115,7 +223,8 @@ async def scan_status(scan_id: str):
         "scan_id": scan_id,
         "status": scan.status,
         "items_count": len(scan.items),
-        "blocks_extracted": len(blocks) if blocks else 0,
+        "blocks_extracted": len(blocks) if blocks else scan.blocks_done,
+        "analyses_ready": scan.analyses_ready,
     }
 
 

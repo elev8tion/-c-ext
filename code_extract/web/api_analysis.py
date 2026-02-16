@@ -143,25 +143,37 @@ async def smart_extract(req: SmartExtractRequest):
 
 @router.post("/dead-code")
 async def dead_code(req: ScanIdRequest):
+    cached = state.get_analysis(req.scan_id, "deadcode")
+    if cached:
+        return {"items": cached}
     graph = await asyncio.to_thread(_get_or_build_graph, req.scan_id)
     items = detect_dead_code(graph)
+    state.store_analysis(req.scan_id, "deadcode", items)
     return {"items": items}
 
 
 @router.post("/architecture")
 async def architecture(req: ScanIdRequest):
+    cached = state.get_analysis(req.scan_id, "architecture")
+    if cached:
+        return cached
     scan = state.scans.get(req.scan_id)
     source_dir = scan.source_dir if scan else ""
     graph = await asyncio.to_thread(_get_or_build_graph, req.scan_id)
     result = generate_architecture(graph, source_dir)
+    state.store_analysis(req.scan_id, "architecture", result)
     return result
 
 
 @router.post("/health")
 async def health(req: ScanIdRequest):
+    cached = state.get_analysis(req.scan_id, "health")
+    if cached:
+        return cached
     blocks = state.get_blocks_for_scan(req.scan_id)
     if not blocks:
         raise HTTPException(400, "No extracted blocks available")
     graph = await asyncio.to_thread(_get_or_build_graph, req.scan_id)
     result = analyze_health(blocks, graph)
+    state.store_analysis(req.scan_id, "health", result)
     return result

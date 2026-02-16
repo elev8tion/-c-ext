@@ -69,7 +69,8 @@ const app = (() => {
     }
 
     // Lazy-load tab data if scan exists
-    if (currentScan && !tabLoaded[tabName]) {
+    // 'cached' means server pre-built it — still need to fetch and render
+    if (currentScan && (!tabLoaded[tabName] || tabLoaded[tabName] === 'cached')) {
       loadTabData(tabName);
     }
   }
@@ -131,18 +132,40 @@ const app = (() => {
   // SCAN
   // ═══════════════════════════════════════════════
 
-  async function waitForExtraction(scanId, maxWait = 60000) {
-    const start = Date.now();
-    while (Date.now() - start < maxWait) {
+  let _pollTimer = null;
+
+  function pollScanProgress(scanId) {
+    if (_pollTimer) clearInterval(_pollTimer);
+
+    _pollTimer = setInterval(async () => {
       try {
         const res = await fetch(`/api/scan/${scanId}/status`);
-        if (res.ok) {
-          const info = await res.json();
-          if (info.status === 'ready') return;
+        if (!res.ok) return;
+        const info = await res.json();
+
+        const total = info.items_count;
+        const done = info.blocks_extracted;
+        const analyses = info.analyses_ready || [];
+
+        if (info.status === 'extracting') {
+          setStatus(`Extracting blocks... ${done}/${total}`);
+        } else if (info.status === 'analyzing') {
+          setStatus(`Analyzing... (${analyses.length}/6 complete)`);
+          // Mark analyses that finished as tab-loadable
+          analyses.forEach(a => { tabLoaded[a] = 'cached'; });
+        } else if (info.status === 'ready') {
+          clearInterval(_pollTimer);
+          _pollTimer = null;
+          setStatus(`${total} items — all analyses ready`);
+          analyses.forEach(a => { tabLoaded[a] = 'cached'; });
+
+          // Auto-load current tab if it just became ready
+          if (activeTab !== 'scan') {
+            loadTabData(activeTab);
+          }
         }
       } catch (_) { /* ignore network blips */ }
-      await new Promise(r => setTimeout(r, 500));
-    }
+    }, 800);
   }
 
   async function scan() {
@@ -175,17 +198,12 @@ const app = (() => {
       saveRecentScan(path, data.scan_id, data.count);
       populateFilters();
       applyFilters();
-      setStatus(`Found ${data.count} items — extracting blocks...`);
+      setStatus(`Found ${data.count} items — processing...`);
       $('#scan-dir').textContent = data.source_dir;
 
-      // Wait for background extraction to finish
-      await waitForExtraction(data.scan_id);
-      setStatus(`Found ${data.count} items — ready`);
+      // Start non-blocking background poll — UI is immediately usable
+      pollScanProgress(data.scan_id);
 
-      // If on a non-scan tab, trigger its data load
-      if (activeTab !== 'scan') {
-        loadTabData(activeTab);
-      }
     } catch (err) {
       setStatus(`Error: ${err.message}`);
     } finally {
@@ -924,16 +942,76 @@ const app = (() => {
     const container = $('#recent-scans');
     container.innerHTML = recent.map(r => {
       const short = r.path.replace(/^\/Users\/\w+\//, '~/');
-      return `<div class="recent-item px-2 py-1 rounded hover:bg-surface-200 cursor-pointer truncate text-gray-400" data-path="${r.path}">
-        ${short} <span class="text-gray-600">(${r.count})</span>
+      return `<div class="recent-item group flex items-center gap-1 px-2 py-1 rounded hover:bg-surface-200 cursor-pointer text-gray-400" data-path="${r.path}" data-scan-id="${r.scanId || ''}">
+        <span class="truncate flex-1">${short} <span class="text-gray-600">(${r.count})</span></span>
+        <button class="recent-delete opacity-0 group-hover:opacity-100 text-gray-600 hover:text-red-400 transition-opacity px-1" title="Remove">&times;</button>
       </div>`;
     }).join('');
     container.querySelectorAll('.recent-item').forEach(el => {
+      el.querySelector('.recent-delete').addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteRecentScan(el.dataset.path, el.dataset.scanId);
+      });
       el.addEventListener('click', () => {
         pathInput.value = el.dataset.path;
         scan();
       });
     });
+  }
+
+  async function deleteRecentScan(path, scanId) {
+    // Delete from server if we have a scan_id
+    if (scanId) {
+      try {
+        await fetch(`/api/scan/${scanId}`, { method: 'DELETE' });
+      } catch (_) { /* ignore — server may have restarted */ }
+    }
+
+    // Remove from localStorage
+    let recent = JSON.parse(localStorage.getItem('ce_recent') || '[]');
+    recent = recent.filter(r => r.path !== path);
+    localStorage.setItem('ce_recent', JSON.stringify(recent));
+    renderRecentScans();
+
+    // If the deleted scan is the current one, clear the entire UI
+    if (currentScan && currentScan.source_dir === path) {
+      // Stop any background polling
+      if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+
+      // Clear data
+      currentScan = null;
+      allItems = [];
+      filteredItems = [];
+      selectedIds.clear();
+      catalogData = null;
+      tourData = null;
+      Object.keys(tabLoaded).forEach(k => delete tabLoaded[k]);
+
+      // Reset scan tab
+      $('#results-body').innerHTML = '';
+      $('#results-table').classList.add('hidden');
+      $('#empty-state').classList.remove('hidden');
+      $('#scan-dir').textContent = '';
+      $('#item-count').textContent = '0 items';
+      $('#download-link').classList.add('hidden');
+      hideProgress();
+
+      // Reset all analysis tab panels — show empty, hide content
+      const tabPanels = ['catalog', 'arch', 'health', 'docs', 'deadcode', 'tour'];
+      tabPanels.forEach(t => {
+        const empty = $(`#${t}-empty`);
+        const content = $(`#${t}-content`);
+        if (empty) empty.classList.remove('hidden');
+        if (content) content.classList.add('hidden');
+      });
+
+      // Reset footer
+      updateSelection();
+
+      // Switch back to scan tab
+      switchTab('scan');
+      setStatus('Ready');
+    }
   }
 
   // ═══════════════════════════════════════════════

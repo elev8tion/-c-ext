@@ -41,8 +41,15 @@ def _build_tour(scan_id: str) -> dict:
 
 @router.post("/generate")
 async def generate(req: GenerateRequest):
+    cached = state.get_analysis(req.scan_id, "tour")
+    if cached:
+        cached["tour_id"] = req.scan_id
+        _tour_cache[req.scan_id] = cached
+        return cached
+
     result = await asyncio.to_thread(_build_tour, req.scan_id)
     _tour_cache[req.scan_id] = result
+    state.store_analysis(req.scan_id, "tour", result)
     result["tour_id"] = req.scan_id
     return result
 

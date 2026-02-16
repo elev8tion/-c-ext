@@ -25,6 +25,12 @@ class GenerateRequest(BaseModel):
 
 @router.post("/generate")
 async def generate(req: GenerateRequest):
+    cached = state.get_analysis(req.scan_id, "docs")
+    if cached:
+        cached["doc_id"] = req.scan_id
+        _docs_cache[req.scan_id] = cached
+        return cached
+
     blocks = state.get_blocks_for_scan(req.scan_id)
     if not blocks:
         raise HTTPException(400, "No extracted blocks available. Scan may still be processing.")
@@ -33,6 +39,7 @@ async def generate(req: GenerateRequest):
 
     doc_id = req.scan_id  # use scan_id as doc_id
     _docs_cache[doc_id] = result
+    state.store_analysis(req.scan_id, "docs", result)
     result["doc_id"] = doc_id
     return result
 

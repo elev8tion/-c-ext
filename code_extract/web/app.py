@@ -35,3 +35,6 @@ def create_app() -> FastAPI:
     # Static files (must be last — catches all unmatched routes)
     app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
     return app
+
+
+app = create_app()
