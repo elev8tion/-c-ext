@@ -78,6 +78,15 @@
         <div class="nav-item" data-tab="tour" onclick="app.switchTab('tour')">
           <span class="nav-icon">&#x279C;</span> Tour
         </div>
+        <div class="nav-item" data-tab="clone" onclick="app.switchTab('clone')">
+          <span class="nav-icon">&#x2704;</span> Clone
+        </div>
+        <div class="nav-item" data-tab="boilerplate" onclick="app.switchTab('boilerplate')">
+          <span class="nav-icon">&#x2699;</span> Boilerplate
+        </div>
+        <div class="nav-item" data-tab="migration" onclick="app.switchTab('migration')">
+          <span class="nav-icon">&#x21C4;</span> Migration
+        </div>
 
         <!-- Filters (Scan tab only) -->
         <div id="sidebar-filters" class="mt-3 space-y-2 px-1">
@@ -330,6 +339,78 @@
         </div>
       </div>
 
+      <!-- ═══ Tab: Clone ═══ -->
+      <div id="tab-clone" class="tab-panel flex-1 overflow-y-auto p-6 hidden">
+        <div id="clone-empty" class="tab-empty-state">
+          <p>Scan a project first to use the pattern cloner</p>
+        </div>
+        <div id="clone-content" class="hidden">
+          <div class="flex items-center gap-4 mb-4">
+            <h2 class="text-lg font-semibold" style="color: var(--text-primary)">Pattern Cloner</h2>
+          </div>
+          <div class="flex gap-4 mb-4">
+            <div class="flex-1">
+              <label class="text-xs mb-1 block" style="color: var(--text-secondary)">Select Item to Clone</label>
+              <select id="clone-item-select" class="glass-input w-full px-3 py-2 text-sm" onchange="app.onCloneItemChange()">
+                <option value="">Choose an item...</option>
+              </select>
+            </div>
+            <div class="flex-1">
+              <label class="text-xs mb-1 block" style="color: var(--text-secondary)">New Name</label>
+              <input id="clone-new-name" type="text" placeholder="new_component_name"
+                class="glass-input w-full px-3 py-2 text-sm">
+            </div>
+          </div>
+          <div class="flex gap-2 mb-4">
+            <button onclick="app.previewClone()" class="neon-btn-outlined neon-btn-cyan text-xs py-1">Preview</button>
+            <button onclick="app.executeClone()" class="neon-btn-filled neon-btn-green text-xs py-1">Clone &amp; Download</button>
+          </div>
+          <div id="clone-preview"></div>
+        </div>
+      </div>
+
+      <!-- ═══ Tab: Boilerplate ═══ -->
+      <div id="tab-boilerplate" class="tab-panel flex-1 overflow-y-auto p-6 hidden">
+        <div id="boilerplate-empty" class="tab-empty-state">
+          <p>Scan a project first to detect boilerplate patterns</p>
+        </div>
+        <div id="boilerplate-content" class="hidden">
+          <div class="flex items-center gap-4 mb-4">
+            <h2 class="text-lg font-semibold" style="color: var(--text-primary)">Boilerplate Generator</h2>
+            <button onclick="app.detectBoilerplate()" class="neon-btn-outlined neon-btn-cyan text-xs py-1">Detect Patterns</button>
+          </div>
+          <div id="boilerplate-items" class="mb-4">
+            <label class="text-xs mb-1 block" style="color: var(--text-secondary)">Select Items</label>
+            <div id="boilerplate-item-list" class="flex flex-wrap gap-2 max-h-32 overflow-y-auto p-2 rounded" style="background: var(--glass-bg); border: 1px solid var(--border-default)"></div>
+          </div>
+          <div id="boilerplate-patterns" class="card-grid mb-4"></div>
+          <div id="boilerplate-template" class="hidden">
+            <h3 class="text-sm font-semibold mb-2" style="color: var(--text-secondary)">Generated Template</h3>
+            <div id="boilerplate-template-code" class="mb-3" style="background: var(--canvas); border-radius: 0.375rem; padding: 0.75rem; overflow: auto; max-height: 300px;">
+              <pre><code class="text-xs"></code></pre>
+            </div>
+            <div id="boilerplate-variables" class="mb-3"></div>
+            <button onclick="app.generateFromTemplate()" class="neon-btn-filled neon-btn-green text-xs py-1">Generate from Template</button>
+            <div id="boilerplate-generated" class="mt-3"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══ Tab: Migration ═══ -->
+      <div id="tab-migration" class="tab-panel flex-1 overflow-y-auto p-6 hidden">
+        <div id="migration-empty" class="tab-empty-state">
+          <p>Scan a project first to detect migration patterns</p>
+        </div>
+        <div id="migration-content" class="hidden">
+          <div class="flex items-center gap-4 mb-4">
+            <h2 class="text-lg font-semibold" style="color: var(--text-primary)">Migration Mapper</h2>
+            <button onclick="app.detectMigrations()" class="neon-btn-outlined neon-btn-cyan text-xs py-1">Detect Migrations</button>
+          </div>
+          <div id="migration-patterns" class="space-y-3"></div>
+          <div id="migration-preview" class="mt-4"></div>
+        </div>
+      </div>
+
     </main>
 
     <!-- ═══ Right Detail Panel ═══ -->
@@ -364,6 +445,17 @@
     </aside>
   </div>
 
+  <!-- ═══ Package Popover ═══ -->
+  <div id="package-popover" class="package-popover hidden">
+    <div class="text-xs font-semibold mb-2" style="color: var(--text-secondary)">Package Name</div>
+    <input id="package-name-input" type="text" placeholder="my-package"
+      class="glass-input w-full px-3 py-1.5 text-sm mb-3">
+    <div class="flex gap-2">
+      <button onclick="app.confirmPackage()" class="neon-btn-filled neon-btn-green text-xs py-1 flex-1">Generate</button>
+      <button onclick="app.hidePackagePopover()" class="neon-btn-outlined neon-btn-cyan text-xs py-1 flex-1">Cancel</button>
+    </div>
+  </div>
+
   <!-- ═══ Footer ═══ -->
   <footer class="flex items-center gap-4 px-4 py-2 shrink-0" style="border-top: 1px solid var(--border-default)">
     <div class="flex items-center gap-2 text-xs" style="color: var(--text-muted)">
@@ -386,7 +478,7 @@
         class="neon-btn-outlined neon-btn-teal text-xs">
         Extract with Deps
       </button>
-      <button id="package-btn" onclick="app.createPackage()" disabled
+      <button id="package-btn" onclick="app.showPackagePopover()" disabled
         class="neon-btn-filled neon-btn-green text-xs">
         Create Package
       </button>

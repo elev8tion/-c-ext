@@ -125,6 +125,9 @@ const app = (() => {
       docs: loadDocs,
       deadcode: loadDeadCode,
       tour: loadTour,
+      clone: loadClone,
+      boilerplate: loadBoilerplate,
+      migration: loadMigration,
     };
     const loader = loaders[tabName];
     if (loader) loader();
@@ -221,7 +224,7 @@ const app = (() => {
 
             fetchItemStats(scanId);
             loadDetailCards();
-            ['catalog', 'architecture', 'health', 'docs', 'deadcode', 'tour'].forEach(tab => {
+            ['catalog', 'architecture', 'health', 'docs', 'deadcode', 'tour', 'clone', 'boilerplate', 'migration'].forEach(tab => {
               loadTabData(tab);
             });
             return; // stop polling
@@ -253,6 +256,9 @@ const app = (() => {
     itemStats = {};
     healthData = null;
     langBreakdown = null;
+    boilerplateSelectedIds.clear();
+    boilerplateTemplate = null;
+    migrationPatterns = [];
 
     try {
       const res = await fetch('/api/scan', {
@@ -632,6 +638,72 @@ const app = (() => {
           scan_id: currentScan.scan_id,
           item_ids: [...selectedIds],
           package_name: 'extracted-package',
+        }),
+      });
+      if (!res.ok) throw new Error((await res.json()).detail || 'Package creation failed');
+      const data = await res.json();
+      setStatus(`Package created: ${data.files_created} files`);
+      showDownload(data.download_url);
+    } catch (err) {
+      setStatus(`Error: ${err.message}`);
+    }
+    hideProgress();
+  }
+
+  // ═══════════════════════════════════════════════
+  // PACKAGE POPOVER
+  // ═══════════════════════════════════════════════
+
+  let _popoverOutsideHandler = null;
+
+  function showPackagePopover() {
+    if (selectedIds.size === 0 || !currentScan) return;
+    const nameInput = $('#package-name-input');
+    const firstSelected = allItems.find(i => selectedIds.has(i.id));
+    nameInput.value = firstSelected ? firstSelected.name.replace(/[^a-zA-Z0-9_-]/g, '-') : 'extracted-package';
+    $('#package-popover').classList.remove('hidden');
+    nameInput.focus();
+
+    nameInput.addEventListener('keydown', function onEnter(e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        nameInput.removeEventListener('keydown', onEnter);
+        confirmPackage();
+      }
+    });
+
+    setTimeout(() => {
+      _popoverOutsideHandler = (e) => {
+        const popover = $('#package-popover');
+        if (popover && !popover.contains(e.target)) hidePackagePopover();
+      };
+      document.addEventListener('click', _popoverOutsideHandler);
+    }, 0);
+  }
+
+  function hidePackagePopover() {
+    $('#package-popover').classList.add('hidden');
+    if (_popoverOutsideHandler) {
+      document.removeEventListener('click', _popoverOutsideHandler);
+      _popoverOutsideHandler = null;
+    }
+  }
+
+  async function confirmPackage() {
+    const packageName = ($('#package-name-input').value || '').trim() || 'extracted-package';
+    hidePackagePopover();
+    if (selectedIds.size === 0 || !currentScan) return;
+    setStatus('Creating package...');
+    showProgress();
+
+    try {
+      const res = await fetch('/api/tools/package', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scan_id: currentScan.scan_id,
+          item_ids: [...selectedIds],
+          package_name: packageName,
         }),
       });
       if (!res.ok) throw new Error((await res.json()).detail || 'Package creation failed');
@@ -1141,25 +1213,68 @@ const app = (() => {
     }).join('');
   }
 
+  let lastDocUpdate = null;
+  let docsWatchTimerInterval = null;
+
+  function _docsTimestamp() {
+    if (!lastDocUpdate) return '';
+    const sec = Math.round((Date.now() - lastDocUpdate) / 1000);
+    if (sec < 5) return ' · Updated just now';
+    if (sec < 60) return ` · Updated ${sec}s ago`;
+    const min = Math.round(sec / 60);
+    return ` · Updated ${min}m ago`;
+  }
+
+  function _refreshDocsIndicator() {
+    const indicator = $('#docs-live-indicator');
+    if (!indicator || indicator.classList.contains('hidden')) return;
+    indicator.innerHTML = `<span class="w-2 h-2 rounded-full inline-block animate-pulse" style="background: var(--success)"></span> Live${_docsTimestamp()}`;
+  }
+
   function toggleDocsWatch(enabled) {
     if (enabled && currentScan) {
       const wsUrl = `ws://${location.host}/api/docs/ws/docs-watch`;
       docsWs = new WebSocket(wsUrl);
       docsWs.onopen = () => {
         docsWs.send(JSON.stringify({ scan_id: currentScan.scan_id }));
-        $('#docs-live-indicator').classList.remove('hidden');
+        const indicator = $('#docs-live-indicator');
+        indicator.classList.remove('hidden');
+        indicator.style.color = 'var(--success)';
+        indicator.innerHTML = '<span class="w-2 h-2 rounded-full inline-block animate-pulse" style="background: var(--success)"></span> Live';
+        docsWatchTimerInterval = setInterval(_refreshDocsIndicator, 10000);
       };
       docsWs.onmessage = (e) => {
-        const data = JSON.parse(e.data);
-        if (data.sections) renderDocs(data);
+        try {
+          const data = JSON.parse(e.data);
+          if (data.sections) {
+            renderDocs(data);
+            lastDocUpdate = Date.now();
+            _refreshDocsIndicator();
+          }
+        } catch (err) {
+          setStatus(`Docs watch: parse error — ${err.message}`);
+        }
       };
       docsWs.onclose = () => {
-        $('#docs-live-indicator').classList.add('hidden');
+        docsWs = null;
+        if (docsWatchTimerInterval) { clearInterval(docsWatchTimerInterval); docsWatchTimerInterval = null; }
+        const indicator = $('#docs-live-indicator');
+        indicator.classList.remove('hidden');
+        indicator.style.color = 'var(--warning)';
+        indicator.innerHTML = '<span class="w-2 h-2 rounded-full inline-block" style="background: var(--warning)"></span> Disconnected — toggle to reconnect';
+        $('#docs-watch-toggle').checked = false;
+      };
+      docsWs.onerror = () => {
+        // onclose will fire after onerror, so the disconnect UI is handled there
       };
     } else if (docsWs) {
       docsWs.close();
       docsWs = null;
-      $('#docs-live-indicator').classList.add('hidden');
+      if (docsWatchTimerInterval) { clearInterval(docsWatchTimerInterval); docsWatchTimerInterval = null; }
+      const indicator = $('#docs-live-indicator');
+      indicator.classList.add('hidden');
+      indicator.style.color = 'var(--success)';
+      indicator.innerHTML = '<span class="w-2 h-2 rounded-full inline-block animate-pulse" style="background: var(--success)"></span> Live';
     }
   }
 
@@ -1195,42 +1310,86 @@ const app = (() => {
   }
 
   function renderDiff(data) {
+    const added = data.added || [];
+    const removed = data.removed || [];
+    const modified = data.modified || [];
+
+    // Collect all types across change categories
+    const allTypes = new Set();
+    [...added, ...removed, ...modified].forEach(i => { if (i.type) allTypes.add(i.type); });
+
+    // Changelog summary
     const summaryEl = $('#diff-summary');
     summaryEl.classList.remove('hidden');
-    summaryEl.innerHTML = `<div class="diff-summary">
-      <span class="diff-stat diff-added">${data.added?.length || 0} added</span>
-      <span class="diff-stat diff-removed">${data.removed?.length || 0} removed</span>
-      <span class="diff-stat diff-modified">${data.modified?.length || 0} modified</span>
-      <span class="diff-stat diff-unchanged">${data.unchanged || 0} unchanged</span>
-    </div>`;
+    summaryEl.innerHTML = `
+      <div class="text-xs mb-2" style="color: var(--text-secondary)">
+        ${added.length} added, ${removed.length} removed, ${modified.length} modified across ${allTypes.size} type${allTypes.size !== 1 ? 's' : ''}
+      </div>
+      <div class="diff-summary">
+        <span class="diff-stat diff-added">${added.length} added</span>
+        <span class="diff-stat diff-removed">${removed.length} removed</span>
+        <span class="diff-stat diff-modified">${modified.length} modified</span>
+        <span class="diff-stat diff-unchanged">${data.unchanged || 0} unchanged</span>
+      </div>`;
 
+    // Group items by type
+    function groupByType(items) {
+      const groups = {};
+      items.forEach(item => {
+        const t = item.type || 'unknown';
+        (groups[t] = groups[t] || []).push(item);
+      });
+      return groups;
+    }
+
+    function renderDiffItem(item, kind) {
+      const labels = { added: { sym: '+', label: 'ADDED', color: 'var(--success)' }, removed: { sym: '-', label: 'REMOVED', color: 'var(--error)' }, modified: { sym: '~', label: 'MODIFIED', color: 'var(--warning)' } };
+      const l = labels[kind];
+      let diffPreview = '';
+      if (kind === 'modified' && item.before && item.after) {
+        diffPreview = `<div class="diff-side-by-side">
+          <pre><code class="text-xs">${esc(item.before)}</code></pre>
+          <pre><code class="text-xs">${esc(item.after)}</code></pre>
+        </div>`;
+      }
+      return `<div class="diff-item ${kind}">
+        <span class="text-xs" style="color: ${l.color}">${l.sym} ${l.label}</span>
+        <div class="text-sm font-medium" style="color: var(--text-primary)">${esc(item.name)}</div>
+        ${diffPreview}
+      </div>`;
+    }
+
+    // Build grouped sections per type
     const results = $('#diff-results');
     let html = '';
 
-    (data.added || []).forEach(item => {
-      html += `<div class="diff-item added">
-        <span class="text-xs" style="color: var(--success)">+ ADDED</span>
-        <div class="text-sm font-medium" style="color: var(--text-primary)">${esc(item.name)} <span class="text-xs" style="color: var(--text-muted)">(${item.type})</span></div>
-      </div>`;
-    });
+    const addedByType = groupByType(added);
+    const removedByType = groupByType(removed);
+    const modifiedByType = groupByType(modified);
 
-    (data.removed || []).forEach(item => {
-      html += `<div class="diff-item removed">
-        <span class="text-xs" style="color: var(--error)">- REMOVED</span>
-        <div class="text-sm font-medium" style="color: var(--text-primary)">${esc(item.name)} <span class="text-xs" style="color: var(--text-muted)">(${item.type})</span></div>
-      </div>`;
-    });
+    const sortedTypes = [...allTypes].sort();
 
-    (data.modified || []).forEach(item => {
-      html += `<div class="diff-item modified">
-        <span class="text-xs" style="color: var(--warning)">~ MODIFIED</span>
-        <div class="text-sm font-medium" style="color: var(--text-primary)">${esc(item.name)} <span class="text-xs" style="color: var(--text-muted)">(${item.type})</span></div>
-        ${item.before && item.after ? `<div class="diff-side-by-side">
-          <pre><code class="text-xs">${esc(item.before)}</code></pre>
-          <pre><code class="text-xs">${esc(item.after)}</code></pre>
-        </div>` : ''}
-      </div>`;
-    });
+    for (const type of sortedTypes) {
+      const typeAdded = addedByType[type] || [];
+      const typeRemoved = removedByType[type] || [];
+      const typeModified = modifiedByType[type] || [];
+      const total = typeAdded.length + typeRemoved.length + typeModified.length;
+
+      const badgeStyle = typeBadgeStyle(type);
+
+      html += `<details open class="mb-3">
+        <summary class="cursor-pointer flex items-center gap-2 py-2 text-sm font-medium" style="color: var(--text-primary)">
+          <span class="px-1.5 py-0.5 rounded text-xs" style="${badgeStyle}">${esc(type)}</span>
+          <span style="color: var(--text-muted)">${total} change${total !== 1 ? 's' : ''}</span>
+        </summary>
+        <div class="pl-2">`;
+
+      typeAdded.forEach(item => { html += renderDiffItem(item, 'added'); });
+      typeRemoved.forEach(item => { html += renderDiffItem(item, 'removed'); });
+      typeModified.forEach(item => { html += renderDiffItem(item, 'modified'); });
+
+      html += `</div></details>`;
+    }
 
     results.innerHTML = html;
   }
@@ -1375,6 +1534,302 @@ const app = (() => {
   }
 
   // ═══════════════════════════════════════════════
+  // TAB: CLONE
+  // ═══════════════════════════════════════════════
+
+  function loadClone() {
+    if (!currentScan) return;
+    $('#clone-empty').classList.add('hidden');
+    $('#clone-content').classList.remove('hidden');
+    tabLoaded.clone = true;
+
+    const sel = $('#clone-item-select');
+    sel.innerHTML = '<option value="">Choose an item...</option>' +
+      allItems.map(i => {
+        const badgeText = i.type || '';
+        return `<option value="${esc(i.id)}">${esc(i.name)} (${badgeText})</option>`;
+      }).join('');
+  }
+
+  function onCloneItemChange() {
+    const itemId = $('#clone-item-select').value;
+    if (!itemId) { $('#clone-preview').innerHTML = ''; return; }
+    const item = allItems.find(i => i.id === itemId);
+    if (item) {
+      $('#clone-preview').innerHTML = `<div class="pattern-card"><div class="text-xs" style="color: var(--text-muted)">Selected: <strong style="color: var(--text-primary)">${esc(item.qualified_name)}</strong> (${esc(item.type)}, ${esc(item.language)})</div></div>`;
+    }
+  }
+
+  async function previewClone() {
+    const itemId = $('#clone-item-select').value;
+    const newName = ($('#clone-new-name').value || '').trim();
+    if (!itemId || !newName || !currentScan) return;
+
+    const item = allItems.find(i => i.id === itemId);
+    const originalName = item ? item.name : '';
+
+    setStatus('Previewing clone...');
+    try {
+      const res = await fetch('/api/tools/clone/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scan_id: currentScan.scan_id, item_ids: [itemId], original_name: originalName, new_name: newName }),
+      });
+      if (!res.ok) throw new Error((await res.json()).detail || 'Clone preview failed');
+      const data = await res.json();
+
+      let html = '';
+      (data.items || []).forEach(ci => {
+        const variants = (ci.variants || []).map(v =>
+          `<div class="flex items-center gap-2 py-0.5 text-xs"><span style="color: var(--text-muted)">${esc(v.original)}</span> <span style="color: var(--accent)">&rarr;</span> <span style="color: var(--success)">${esc(v.replacement)}</span></div>`
+        ).join('');
+
+        html += `<div class="pattern-card mb-3">
+          <div class="text-sm font-medium mb-2" style="color: var(--text-primary)">${esc(ci.name)}</div>
+          ${variants ? `<div class="mb-2"><div class="text-xs font-semibold mb-1" style="color: var(--text-secondary)">Case Variants</div>${variants}</div>` : ''}
+          ${ci.preview ? `<div><div class="text-xs font-semibold mb-1" style="color: var(--text-secondary)">Preview</div><pre style="background: var(--canvas); border-radius: 0.375rem; padding: 0.5rem; overflow: auto; max-height: 200px;"><code class="text-xs">${esc(ci.preview)}</code></pre></div>` : ''}
+        </div>`;
+      });
+
+      $('#clone-preview').innerHTML = html;
+      $('#clone-preview').querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+      setStatus('Clone preview ready');
+    } catch (err) {
+      setStatus(`Clone preview error: ${err.message}`);
+    }
+  }
+
+  async function executeClone() {
+    const itemId = $('#clone-item-select').value;
+    const newName = ($('#clone-new-name').value || '').trim();
+    if (!itemId || !newName || !currentScan) return;
+
+    const item = allItems.find(i => i.id === itemId);
+    const originalName = item ? item.name : '';
+
+    setStatus('Cloning...');
+    showProgress();
+    try {
+      const res = await fetch('/api/tools/clone', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scan_id: currentScan.scan_id, item_ids: [itemId], original_name: originalName, new_name: newName }),
+      });
+      if (!res.ok) throw new Error((await res.json()).detail || 'Clone failed');
+      const data = await res.json();
+      setStatus(`Cloned: ${data.files_created} files`);
+      showDownload(data.download_url);
+    } catch (err) {
+      setStatus(`Clone error: ${err.message}`);
+    }
+    hideProgress();
+  }
+
+  // ═══════════════════════════════════════════════
+  // TAB: BOILERPLATE
+  // ═══════════════════════════════════════════════
+
+  let boilerplateSelectedIds = new Set();
+  let boilerplateTemplate = null;
+
+  function loadBoilerplate() {
+    if (!currentScan) return;
+    $('#boilerplate-empty').classList.add('hidden');
+    $('#boilerplate-content').classList.remove('hidden');
+    tabLoaded.boilerplate = true;
+
+    const list = $('#boilerplate-item-list');
+    list.innerHTML = allItems.map(i => {
+      const checked = boilerplateSelectedIds.has(i.id) ? 'checked' : '';
+      return `<label class="flex items-center gap-1.5 text-xs px-2 py-1 rounded cursor-pointer" style="color: var(--text-secondary); background: var(--glass-bg)">
+        <input type="checkbox" class="bp-item-check" data-id="${esc(i.id)}" ${checked}> ${esc(i.name)}
+      </label>`;
+    }).join('');
+
+    list.querySelectorAll('.bp-item-check').forEach(cb => {
+      cb.addEventListener('change', () => {
+        if (cb.checked) boilerplateSelectedIds.add(cb.dataset.id);
+        else boilerplateSelectedIds.delete(cb.dataset.id);
+      });
+    });
+  }
+
+  async function detectBoilerplate() {
+    if (!currentScan) return;
+    const ids = boilerplateSelectedIds.size > 0 ? [...boilerplateSelectedIds] : allItems.map(i => i.id);
+
+    setStatus('Detecting boilerplate patterns...');
+    try {
+      const res = await fetch('/api/tools/boilerplate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scan_id: currentScan.scan_id, item_ids: ids, template_name: 'template' }),
+      });
+      if (!res.ok) throw new Error((await res.json()).detail || 'Boilerplate detection failed');
+      const data = await res.json();
+
+      // Render pattern cards
+      const patternsEl = $('#boilerplate-patterns');
+      patternsEl.innerHTML = (data.patterns || []).map(p => `
+        <div class="pattern-card">
+          <div class="text-sm font-medium" style="color: var(--text-primary)">${esc(p.pattern_name)}</div>
+          <div class="text-xs" style="color: var(--text-muted)">${p.count || 0} occurrences</div>
+          ${(p.example_names || []).length > 0 ? `<div class="mt-1 text-xs" style="color: var(--text-secondary)">${p.example_names.map(i => esc(i)).join(', ')}</div>` : ''}
+        </div>
+      `).join('');
+
+      // Render template
+      if (data.template) {
+        boilerplateTemplate = data.template;
+        const templateEl = $('#boilerplate-template');
+        templateEl.classList.remove('hidden');
+
+        const codeEl = templateEl.querySelector('code');
+        codeEl.textContent = data.template.template_code || '';
+        hljs.highlightElement(codeEl);
+
+        // Render variable inputs
+        const vars = data.template.variables || [];
+        const varsEl = $('#boilerplate-variables');
+        varsEl.innerHTML = vars.length > 0
+          ? `<div class="text-xs font-semibold mb-1" style="color: var(--text-secondary)">Template Variables</div>` +
+            vars.map(v => `<div class="flex items-center gap-2 mb-1">
+              <span class="text-xs" style="color: var(--text-muted); min-width: 100px">${esc(v.name)}</span>
+              <input type="text" class="glass-input px-2 py-1 text-xs flex-1 bp-var-input" data-var="${esc(v.name)}" placeholder="${esc(v.example || v.name)}">
+            </div>`).join('')
+          : '';
+      }
+
+      setStatus(`Found ${(data.patterns || []).length} patterns`);
+    } catch (err) {
+      setStatus(`Boilerplate error: ${err.message}`);
+    }
+  }
+
+  async function generateFromTemplate() {
+    if (!boilerplateTemplate) return;
+    const variables = {};
+    $$('.bp-var-input').forEach(input => {
+      variables[input.dataset.var] = input.value;
+    });
+
+    setStatus('Generating from template...');
+    try {
+      const res = await fetch('/api/tools/boilerplate/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ template_code: boilerplateTemplate.template_code, variables }),
+      });
+      if (!res.ok) throw new Error((await res.json()).detail || 'Generation failed');
+      const data = await res.json();
+
+      const genEl = $('#boilerplate-generated');
+      genEl.innerHTML = `<div class="text-xs font-semibold mb-1" style="color: var(--text-secondary)">Generated Code</div>
+        <pre style="background: var(--canvas); border-radius: 0.375rem; padding: 0.75rem; overflow: auto; max-height: 300px;"><code class="text-xs">${esc(data.generated_code || '')}</code></pre>`;
+      genEl.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+      setStatus('Code generated from template');
+    } catch (err) {
+      setStatus(`Generate error: ${err.message}`);
+    }
+  }
+
+  // ═══════════════════════════════════════════════
+  // TAB: MIGRATION
+  // ═══════════════════════════════════════════════
+
+  let migrationPatterns = [];
+
+  function loadMigration() {
+    if (!currentScan) return;
+    $('#migration-empty').classList.add('hidden');
+    $('#migration-content').classList.remove('hidden');
+    tabLoaded.migration = true;
+  }
+
+  async function detectMigrations() {
+    if (!currentScan) return;
+    setStatus('Detecting migration patterns...');
+
+    try {
+      const res = await fetch('/api/tools/migration/detect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scan_id: currentScan.scan_id }),
+      });
+      if (!res.ok) throw new Error((await res.json()).detail || 'Migration detection failed');
+      const data = await res.json();
+      migrationPatterns = data.patterns || [];
+
+      const container = $('#migration-patterns');
+      container.innerHTML = migrationPatterns.map(p => {
+        const items = (p.items || []).map(item => {
+          const conf = item.confidence || 0;
+          const cls = conf >= 0.8 ? 'confidence-high' : conf >= 0.5 ? 'confidence-mid' : 'confidence-low';
+          return `<div class="flex items-center justify-between py-1 text-xs" style="border-bottom: 1px solid var(--border-default)">
+            <span style="color: var(--text-secondary)">${esc(item.name)}</span>
+            <div class="flex items-center gap-2">
+              <span class="confidence-badge ${cls}">${Math.round(conf * 100)}%</span>
+              <button class="neon-btn-outlined neon-btn-cyan migration-apply-btn" style="font-size:0.625rem; padding: 2px 8px;" data-item-id="${esc(item.item_id)}" data-pattern-id="${esc(p.id)}">Apply</button>
+            </div>
+          </div>`;
+        }).join('');
+
+        return `<details class="pattern-card">
+          <summary class="cursor-pointer flex items-center justify-between">
+            <div>
+              <div class="text-sm font-medium" style="color: var(--text-primary)">${esc(p.name)}</div>
+              <div class="text-xs" style="color: var(--text-muted)">${esc(p.description || '')}</div>
+            </div>
+            <span class="text-xs" style="color: var(--text-secondary)">${(p.items || []).length} items</span>
+          </summary>
+          <div class="mt-2 pt-2" style="border-top: 1px solid var(--border-default)">${items}</div>
+        </details>`;
+      }).join('');
+
+      container.querySelectorAll('.migration-apply-btn').forEach(btn => {
+        btn.addEventListener('click', () => applyMigration(btn.dataset.itemId, btn.dataset.patternId));
+      });
+
+      setStatus(`Found ${migrationPatterns.length} migration patterns`);
+    } catch (err) {
+      setStatus(`Migration error: ${err.message}`);
+    }
+  }
+
+  async function applyMigration(itemId, patternId) {
+    if (!currentScan) return;
+    setStatus('Applying migration...');
+
+    try {
+      const res = await fetch('/api/tools/migration/apply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scan_id: currentScan.scan_id, item_id: itemId, pattern_id: patternId }),
+      });
+      if (!res.ok) throw new Error((await res.json()).detail || 'Migration apply failed');
+      const data = await res.json();
+
+      const previewEl = $('#migration-preview');
+      previewEl.innerHTML = `<h3 class="text-sm font-semibold mb-2" style="color: var(--text-secondary)">Migration Result</h3>
+        ${(data.changes || []).length > 0 ? `<div class="text-xs mb-2" style="color: var(--text-muted)">${data.changes.length} change${data.changes.length !== 1 ? 's' : ''} applied</div>` : ''}
+        <div class="diff-side-by-side">
+          <div>
+            <div class="text-xs font-semibold mb-1" style="color: var(--error)">Before</div>
+            <pre style="background: var(--canvas); border-radius: 0.375rem; padding: 0.5rem; overflow: auto; max-height: 300px;"><code class="text-xs">${esc(data.original || '')}</code></pre>
+          </div>
+          <div>
+            <div class="text-xs font-semibold mb-1" style="color: var(--success)">After</div>
+            <pre style="background: var(--canvas); border-radius: 0.375rem; padding: 0.5rem; overflow: auto; max-height: 300px;"><code class="text-xs">${esc(data.migrated || '')}</code></pre>
+          </div>
+        </div>`;
+      previewEl.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+      setStatus('Migration applied — review changes above');
+    } catch (err) {
+      setStatus(`Migration apply error: ${err.message}`);
+    }
+  }
+
+  // ═══════════════════════════════════════════════
   // RECENT SCANS (localStorage)
   // ═══════════════════════════════════════════════
 
@@ -1433,6 +1888,9 @@ const app = (() => {
       itemStats = {};
       healthData = null;
       langBreakdown = null;
+      boilerplateSelectedIds.clear();
+      boilerplateTemplate = null;
+      migrationPatterns = [];
       Object.keys(tabLoaded).forEach(k => delete tabLoaded[k]);
 
       $('#results-body').innerHTML = '';
@@ -1443,7 +1901,7 @@ const app = (() => {
       $('#download-link').classList.add('hidden');
       hideProgress();
 
-      const tabPanels = ['catalog', 'arch', 'health', 'docs', 'deadcode', 'tour'];
+      const tabPanels = ['catalog', 'arch', 'health', 'docs', 'deadcode', 'tour', 'clone', 'boilerplate', 'migration'];
       tabPanels.forEach(t => {
         const empty = $(`#${t}-empty`);
         const content = $(`#${t}-content`);
@@ -1515,10 +1973,14 @@ const app = (() => {
   return {
     scan, applyFilters, toggleAll, closePreview, extract,
     switchTab, smartExtract, createPackage, showPreview,
+    showPackagePopover, hidePackagePopover, confirmPackage,
     filterCatalog, exportCatalogHTML,
     setArchLayout, archFitView, archResetHighlight, exportArchPNG, archSearchNodes,
     toggleDocsWatch, exportDocsMarkdown,
     runDiff, loadDeadCode,
     goToTourStep, tourPrev, tourNext, exportTourMarkdown,
+    onCloneItemChange, previewClone, executeClone,
+    detectBoilerplate, generateFromTemplate,
+    detectMigrations,
   };
 })();
