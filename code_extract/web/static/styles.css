@@ -901,8 +901,72 @@ tr.file-group-header {
   border: 1px solid var(--border-default);
   border-radius: 10px;
   padding: 1rem;
-  transition: border-color 0.15s;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
 }
 .pattern-card:hover {
   border-color: var(--border-hover);
+}
+.pattern-card.selected {
+  background: var(--accent-dimmed);
+  border-color: var(--accent);
+}
+
+/* ═══ Boilerplate Enhancements ═══ */
+
+.bp-template-textarea {
+  width: 100%;
+  font-family: monospace;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  background: var(--canvas);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  border-radius: 0.375rem;
+  padding: 0.75rem;
+  resize: vertical;
+  min-height: 120px;
+  max-height: 400px;
+  tab-size: 2;
+}
+.bp-template-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(0,240,255,0.15);
+}
+
+.bp-custom-var-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.375rem;
+}
+
+.bp-remove-btn {
+  background: none;
+  border: none;
+  color: var(--error);
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 0 0.25rem;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+.bp-remove-btn:hover {
+  opacity: 1;
+}
+
+.bp-variant-set {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--border-default);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+}
+
+.bp-download-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
 }

@@ -258,6 +258,9 @@ const app = (() => {
     langBreakdown = null;
     boilerplateSelectedIds.clear();
     boilerplateTemplate = null;
+    boilerplateSelectedPattern = null;
+    boilerplateVariants = [];
+    variantCounter = 0;
     migrationPatterns = [];
 
     try {
@@ -1631,6 +1634,10 @@ const app = (() => {
 
   let boilerplateSelectedIds = new Set();
   let boilerplateTemplate = null;
+  let boilerplateSelectedPattern = null;  // {directory, block_type} or null
+  let boilerplateVariants = [];           // [{id, el}]
+  let variantCounter = 0;
+  let _syncTimer = null;
 
   function loadBoilerplate() {
     if (!currentScan) return;
@@ -1654,50 +1661,197 @@ const app = (() => {
     });
   }
 
+  function selectPattern(cardEl) {
+    const dir = cardEl.dataset.dir;
+    const type = cardEl.dataset.type;
+
+    // Toggle selection
+    if (boilerplateSelectedPattern &&
+        boilerplateSelectedPattern.directory === dir &&
+        boilerplateSelectedPattern.block_type === type) {
+      // Deselect
+      boilerplateSelectedPattern = null;
+      cardEl.classList.remove('selected');
+      // Re-fetch without filter
+      detectBoilerplate();
+      return;
+    }
+
+    // Deselect all, select this one
+    $$('#boilerplate-patterns .pattern-card').forEach(c => c.classList.remove('selected'));
+    cardEl.classList.add('selected');
+    boilerplateSelectedPattern = { directory: dir, block_type: type };
+
+    // Re-fetch with filter
+    detectBoilerplate();
+  }
+
+  function renderTemplate(template) {
+    boilerplateTemplate = template;
+    const templateEl = $('#boilerplate-template');
+    templateEl.classList.remove('hidden');
+
+    const editor = $('#boilerplate-template-editor');
+    editor.value = template.template_code || '';
+    editor.removeEventListener('input', syncVariablesFromTemplate);
+    editor.addEventListener('input', syncVariablesFromTemplate);
+
+    // Render auto-detected variable inputs
+    renderVariableInputs(template.variables || []);
+
+    // Clear custom vars and variants
+    $('#boilerplate-custom-vars').innerHTML = '';
+    $('#boilerplate-variants').innerHTML = '';
+    boilerplateVariants = [];
+    variantCounter = 0;
+    $('#boilerplate-generated').innerHTML = '';
+  }
+
+  function renderVariableInputs(vars) {
+    const varsEl = $('#boilerplate-variables');
+    varsEl.innerHTML = vars.length > 0
+      ? `<div class="text-xs font-semibold mb-1" style="color: var(--text-secondary)">Template Variables</div>` +
+        vars.map(v => `<div class="flex items-center gap-2 mb-1">
+          <span class="text-xs" style="color: var(--text-muted); min-width: 100px">${esc(v.name)}</span>
+          <input type="text" class="glass-input px-2 py-1 text-xs flex-1 bp-var-input" data-var="${esc(v.name)}" placeholder="${esc(v.example || v.name)}">
+        </div>`).join('')
+      : '';
+  }
+
+  function syncVariablesFromTemplate() {
+    clearTimeout(_syncTimer);
+    _syncTimer = setTimeout(() => {
+      const editor = $('#boilerplate-template-editor');
+      const text = editor.value;
+      const found = new Set();
+      const re = /\{\{(\w+)\}\}/g;
+      let m;
+      while ((m = re.exec(text)) !== null) found.add(m[1]);
+
+      // Get existing auto-detected var names
+      const autoVars = new Set();
+      $$('#boilerplate-variables .bp-var-input').forEach(el => autoVars.add(el.dataset.var));
+
+      // Get existing custom var names
+      const customVars = new Set();
+      $$('#boilerplate-custom-vars .bp-custom-var-name').forEach(el => customVars.add(el.value));
+
+      // Add missing vars as custom var rows
+      for (const name of found) {
+        if (!autoVars.has(name) && !customVars.has(name)) {
+          addCustomVariable(name);
+        }
+      }
+    }, 300);
+  }
+
+  function addCustomVariable(prefillName) {
+    const container = $('#boilerplate-custom-vars');
+    // Add header if first custom var
+    if (container.children.length === 0) {
+      const hdr = document.createElement('div');
+      hdr.className = 'text-xs font-semibold mb-1';
+      hdr.style.color = 'var(--text-secondary)';
+      hdr.textContent = 'Custom Variables';
+      container.appendChild(hdr);
+    }
+    const row = document.createElement('div');
+    row.className = 'bp-custom-var-row';
+    row.innerHTML = `<input type="text" class="glass-input px-2 py-1 text-xs bp-custom-var-name" placeholder="name" style="width:100px" value="${esc(prefillName || '')}">
+      <input type="text" class="glass-input px-2 py-1 text-xs flex-1 bp-custom-var-value" placeholder="value">
+      <button class="bp-remove-btn" onclick="this.parentElement.remove()">&times;</button>`;
+    container.appendChild(row);
+  }
+
+  function collectAllVariables() {
+    const variables = {};
+    // Auto-detected vars
+    $$('#boilerplate-variables .bp-var-input').forEach(input => {
+      variables[input.dataset.var] = input.value;
+    });
+    // Custom vars
+    $$('#boilerplate-custom-vars .bp-custom-var-row').forEach(row => {
+      const name = row.querySelector('.bp-custom-var-name');
+      const value = row.querySelector('.bp-custom-var-value');
+      if (name && name.value.trim()) {
+        variables[name.value.trim()] = (value && value.value) || '';
+      }
+    });
+    return variables;
+  }
+
+  function addVariant() {
+    variantCounter++;
+    const container = $('#boilerplate-variants');
+    const varNames = Object.keys(collectAllVariables());
+    if (varNames.length === 0) {
+      setStatus('Add variables first before creating variants');
+      return;
+    }
+
+    const setEl = document.createElement('div');
+    setEl.className = 'bp-variant-set';
+    setEl.dataset.variantId = variantCounter;
+    setEl.innerHTML = `<div class="flex items-center justify-between mb-2">
+        <span class="text-xs font-semibold" style="color: var(--text-secondary)">Variant ${variantCounter}</span>
+        <button class="bp-remove-btn" data-vid="${variantCounter}">&times;</button>
+      </div>` +
+      varNames.map(n => `<div class="flex items-center gap-2 mb-1">
+        <span class="text-xs" style="color: var(--text-muted); min-width: 100px">${esc(n)}</span>
+        <input type="text" class="glass-input px-2 py-1 text-xs flex-1 bp-variant-var" data-var="${esc(n)}" placeholder="${esc(n)}">
+      </div>`).join('');
+    container.appendChild(setEl);
+
+    setEl.querySelector('.bp-remove-btn').addEventListener('click', () => {
+      setEl.remove();
+      boilerplateVariants = boilerplateVariants.filter(v => v.id !== variantCounter);
+    });
+
+    boilerplateVariants.push({ id: variantCounter, el: setEl });
+  }
+
   async function detectBoilerplate() {
     if (!currentScan) return;
     const ids = boilerplateSelectedIds.size > 0 ? [...boilerplateSelectedIds] : allItems.map(i => i.id);
 
     setStatus('Detecting boilerplate patterns...');
     try {
+      const body = { scan_id: currentScan.scan_id, item_ids: ids, template_name: 'template' };
+      if (boilerplateSelectedPattern) {
+        body.pattern_filter = boilerplateSelectedPattern;
+      }
+
       const res = await fetch('/api/tools/boilerplate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scan_id: currentScan.scan_id, item_ids: ids, template_name: 'template' }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error((await res.json()).detail || 'Boilerplate detection failed');
       const data = await res.json();
 
-      // Render pattern cards
+      // Render pattern cards with data attrs and click handlers
       const patternsEl = $('#boilerplate-patterns');
       patternsEl.innerHTML = (data.patterns || []).map(p => `
-        <div class="pattern-card">
+        <div class="pattern-card" data-dir="${esc(p.directory)}" data-type="${esc(p.block_type)}">
           <div class="text-sm font-medium" style="color: var(--text-primary)">${esc(p.pattern_name)}</div>
           <div class="text-xs" style="color: var(--text-muted)">${p.count || 0} occurrences</div>
           ${(p.example_names || []).length > 0 ? `<div class="mt-1 text-xs" style="color: var(--text-secondary)">${p.example_names.map(i => esc(i)).join(', ')}</div>` : ''}
         </div>
       `).join('');
 
+      // Attach click handlers and restore selection
+      patternsEl.querySelectorAll('.pattern-card').forEach(card => {
+        if (boilerplateSelectedPattern &&
+            card.dataset.dir === boilerplateSelectedPattern.directory &&
+            card.dataset.type === boilerplateSelectedPattern.block_type) {
+          card.classList.add('selected');
+        }
+        card.addEventListener('click', () => selectPattern(card));
+      });
+
       // Render template
       if (data.template) {
-        boilerplateTemplate = data.template;
-        const templateEl = $('#boilerplate-template');
-        templateEl.classList.remove('hidden');
-
-        const codeEl = templateEl.querySelector('code');
-        codeEl.textContent = data.template.template_code || '';
-        hljs.highlightElement(codeEl);
-
-        // Render variable inputs
-        const vars = data.template.variables || [];
-        const varsEl = $('#boilerplate-variables');
-        varsEl.innerHTML = vars.length > 0
-          ? `<div class="text-xs font-semibold mb-1" style="color: var(--text-secondary)">Template Variables</div>` +
-            vars.map(v => `<div class="flex items-center gap-2 mb-1">
-              <span class="text-xs" style="color: var(--text-muted); min-width: 100px">${esc(v.name)}</span>
-              <input type="text" class="glass-input px-2 py-1 text-xs flex-1 bp-var-input" data-var="${esc(v.name)}" placeholder="${esc(v.example || v.name)}">
-            </div>`).join('')
-          : '';
+        renderTemplate(data.template);
       }
 
       setStatus(`Found ${(data.patterns || []).length} patterns`);
@@ -1707,30 +1861,100 @@ const app = (() => {
   }
 
   async function generateFromTemplate() {
-    if (!boilerplateTemplate) return;
-    const variables = {};
-    $$('.bp-var-input').forEach(input => {
-      variables[input.dataset.var] = input.value;
+    const editor = $('#boilerplate-template-editor');
+    const templateCode = editor ? editor.value : '';
+    if (!templateCode.trim()) return;
+
+    const baseVars = collectAllVariables();
+
+    // Collect variant variable sets
+    const variantSets = [];
+    $$('#boilerplate-variants .bp-variant-set').forEach(setEl => {
+      const vars = {};
+      setEl.querySelectorAll('.bp-variant-var').forEach(input => {
+        vars[input.dataset.var] = input.value;
+      });
+      variantSets.push(vars);
     });
 
     setStatus('Generating from template...');
     try {
-      const res = await fetch('/api/tools/boilerplate/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ template_code: boilerplateTemplate.template_code, variables }),
-      });
-      if (!res.ok) throw new Error((await res.json()).detail || 'Generation failed');
-      const data = await res.json();
-
-      const genEl = $('#boilerplate-generated');
-      genEl.innerHTML = `<div class="text-xs font-semibold mb-1" style="color: var(--text-secondary)">Generated Code</div>
-        <pre style="background: var(--canvas); border-radius: 0.375rem; padding: 0.75rem; overflow: auto; max-height: 300px;"><code class="text-xs">${esc(data.generated_code || '')}</code></pre>`;
-      genEl.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+      if (variantSets.length > 0) {
+        // Batch generate: base + variants
+        const allSets = [baseVars, ...variantSets];
+        const res = await fetch('/api/tools/boilerplate/generate-batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ template_code: templateCode, variable_sets: allSets }),
+        });
+        if (!res.ok) throw new Error((await res.json()).detail || 'Batch generation failed');
+        const data = await res.json();
+        renderGeneratedResults(data.generated_codes || [], templateCode);
+      } else {
+        // Single generate
+        const res = await fetch('/api/tools/boilerplate/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ template_code: templateCode, variables: baseVars }),
+        });
+        if (!res.ok) throw new Error((await res.json()).detail || 'Generation failed');
+        const data = await res.json();
+        renderGeneratedResults([data.generated_code || ''], templateCode);
+      }
       setStatus('Code generated from template');
     } catch (err) {
       setStatus(`Generate error: ${err.message}`);
     }
+  }
+
+  function renderGeneratedResults(results, templateCode) {
+    const genEl = $('#boilerplate-generated');
+    const ext = (boilerplateTemplate && boilerplateTemplate.config && boilerplateTemplate.config.language) || 'txt';
+
+    let html = `<div class="text-xs font-semibold mb-2" style="color: var(--text-secondary)">Generated Code (${results.length} variant${results.length !== 1 ? 's' : ''})</div>`;
+
+    results.forEach((code, i) => {
+      const label = results.length > 1 ? `Variant ${i + 1}` : 'Output';
+      html += `<div class="mb-3">
+        <div class="flex items-center justify-between mb-1">
+          <span class="text-xs" style="color: var(--text-muted)">${label}</span>
+          <div class="bp-download-row">
+            <button class="neon-btn-outlined neon-btn-cyan text-xs py-0.5 px-2" onclick="app.downloadVariant(${i})">Download</button>
+          </div>
+        </div>
+        <pre style="background: var(--canvas); border-radius: 0.375rem; padding: 0.75rem; overflow: auto; max-height: 300px;"><code class="text-xs bp-gen-code">${esc(code)}</code></pre>
+      </div>`;
+    });
+
+    if (results.length > 1) {
+      html += `<div class="bp-download-row"><button class="neon-btn-filled neon-btn-green text-xs py-1" onclick="app.downloadAllGenerated()">Download All</button></div>`;
+    }
+
+    genEl.innerHTML = html;
+    genEl.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+    // Stash results for download
+    genEl._results = results;
+    genEl._ext = ext;
+  }
+
+  function downloadVariant(index) {
+    const genEl = $('#boilerplate-generated');
+    const results = genEl._results;
+    const ext = genEl._ext || 'txt';
+    if (!results || !results[index]) return;
+    const blob = new Blob([results[index]], { type: 'text/plain' });
+    downloadBlob(blob, `generated_${index + 1}.${ext}`);
+  }
+
+  function downloadAllGenerated() {
+    const genEl = $('#boilerplate-generated');
+    const results = genEl._results;
+    const ext = genEl._ext || 'txt';
+    if (!results || results.length === 0) return;
+    const separator = `\n${'='.repeat(60)}\n`;
+    const combined = results.map((c, i) => `// === Variant ${i + 1} ===\n${c}`).join(separator);
+    const blob = new Blob([combined], { type: 'text/plain' });
+    downloadBlob(blob, `generated_all.${ext}`);
   }
 
   // ═══════════════════════════════════════════════
@@ -1890,6 +2114,9 @@ const app = (() => {
       langBreakdown = null;
       boilerplateSelectedIds.clear();
       boilerplateTemplate = null;
+      boilerplateSelectedPattern = null;
+      boilerplateVariants = [];
+      variantCounter = 0;
       migrationPatterns = [];
       Object.keys(tabLoaded).forEach(k => delete tabLoaded[k]);
 
@@ -1981,6 +2208,7 @@ const app = (() => {
     goToTourStep, tourPrev, tourNext, exportTourMarkdown,
     onCloneItemChange, previewClone, executeClone,
     detectBoilerplate, generateFromTemplate,
+    addCustomVariable, addVariant, downloadVariant, downloadAllGenerated,
     detectMigrations,
   };
 })();

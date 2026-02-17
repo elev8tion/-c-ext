@@ -167,10 +167,16 @@ async def clone(req: CloneRequest):
 
 # ── Boilerplate Generator ────────────────────────────────────
 
+class PatternFilter(BaseModel):
+    directory: str
+    block_type: str
+
+
 class BoilerplateRequest(BaseModel):
     scan_id: str
     item_ids: list[str]
     template_name: str = "template"
+    pattern_filter: PatternFilter | None = None
 
 
 class BoilerplateGenerateRequest(BaseModel):
@@ -178,15 +184,30 @@ class BoilerplateGenerateRequest(BaseModel):
     variables: dict[str, str]
 
 
+class BoilerplateBatchRequest(BaseModel):
+    template_code: str
+    variable_sets: list[dict[str, str]]
+
+
 @router.post("/boilerplate")
 async def detect_boilerplate(req: BoilerplateRequest):
-    from code_extract.analysis.boilerplate import detect_patterns, generate_template
+    from code_extract.analysis.boilerplate import (
+        detect_patterns, generate_template, filter_blocks_by_pattern,
+    )
 
     blocks = state.get_blocks_for_scan(req.scan_id)
     if not blocks:
         raise HTTPException(400, "No extracted blocks available")
 
-    selected = [blocks[iid] for iid in req.item_ids if iid in blocks]
+    # If a pattern filter is provided, narrow to matching blocks
+    if req.pattern_filter:
+        filtered = filter_blocks_by_pattern(
+            blocks, req.pattern_filter.directory, req.pattern_filter.block_type,
+        )
+        selected = filtered if filtered else [blocks[iid] for iid in req.item_ids if iid in blocks]
+    else:
+        selected = [blocks[iid] for iid in req.item_ids if iid in blocks]
+
     if not selected:
         raise HTTPException(400, "No matching blocks")
 
@@ -206,6 +227,15 @@ async def generate_from_template(req: BoilerplateGenerateRequest):
     from code_extract.analysis.boilerplate import apply_template
     result = apply_template(req.template_code, req.variables)
     return {"generated_code": result}
+
+
+@router.post("/boilerplate/generate-batch")
+async def generate_batch(req: BoilerplateBatchRequest):
+    from code_extract.analysis.boilerplate import batch_apply_template
+    if len(req.variable_sets) > 50:
+        raise HTTPException(400, "Maximum 50 variants allowed")
+    results = batch_apply_template(req.template_code, req.variable_sets)
+    return {"generated_codes": results}
 
 
 # ── Migration Mapper ──────────────────────────────────────────

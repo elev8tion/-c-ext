@@ -258,6 +258,44 @@ class TestBoilerplate:
         result = apply_template(template, {"name": "Foo"})
         assert "Foo" in result
 
+    def test_filter_blocks_by_pattern(self):
+        from code_extract.analysis.boilerplate import filter_blocks_by_pattern
+        a = _make_block("CompA", source="class CompA: pass",
+                        btype=CodeBlockType.CLASS,
+                        file_path=Path("/proj/components/a.py"))
+        b = _make_block("CompB", source="class CompB: pass",
+                        btype=CodeBlockType.CLASS,
+                        file_path=Path("/proj/components/b.py"))
+        c = _make_block("util_fn", source="def util_fn(): pass",
+                        btype=CodeBlockType.FUNCTION,
+                        file_path=Path("/proj/utils/helpers.py"))
+        blocks = _blocks_dict(a, b, c)
+        result = filter_blocks_by_pattern(blocks, "components", "class")
+        assert len(result) == 2
+        names = {r.item.name for r in result}
+        assert names == {"CompA", "CompB"}
+
+    def test_filter_blocks_empty(self):
+        from code_extract.analysis.boilerplate import filter_blocks_by_pattern
+        a = _make_block("CompA", source="class CompA: pass",
+                        btype=CodeBlockType.CLASS,
+                        file_path=Path("/proj/components/a.py"))
+        blocks = _blocks_dict(a)
+        result = filter_blocks_by_pattern(blocks, "nonexistent", "class")
+        assert result == []
+
+    def test_batch_apply_template(self):
+        from code_extract.analysis.boilerplate import batch_apply_template
+        template = "class {{name}}({{base}}): pass"
+        sets = [
+            {"name": "Foo", "base": "Base"},
+            {"name": "Bar", "base": "Parent"},
+        ]
+        results = batch_apply_template(template, sets)
+        assert len(results) == 2
+        assert "class Foo(Base): pass" == results[0]
+        assert "class Bar(Parent): pass" == results[1]
+
 
 # ── Migration ─────────────────────────────────────────────────
 

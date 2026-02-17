@@ -81,6 +81,26 @@ def generate_template(blocks: list[ExtractedBlock], template_name: str = "templa
     }
 
 
+def filter_blocks_by_pattern(
+    blocks: dict[str, ExtractedBlock], directory: str, block_type: str,
+) -> list[ExtractedBlock]:
+    """Filter blocks to only those matching a directory + block_type pair."""
+    result: list[ExtractedBlock] = []
+    for block in blocks.values():
+        parts = PurePosixPath(str(block.item.file_path)).parts
+        blk_dir = "/".join(parts[-2:-1]) if len(parts) > 1 else "root"
+        if blk_dir == directory and block.item.block_type.value == block_type:
+            result.append(block)
+    return result
+
+
+def batch_apply_template(
+    template_code: str, variable_sets: list[dict[str, str]],
+) -> list[str]:
+    """Apply multiple variable sets to a template, returning a list of generated code strings."""
+    return [apply_template(template_code, vs) for vs in variable_sets]
+
+
 def apply_template(template_code: str, variables: dict[str, str]) -> str:
     """Apply variable values to a template."""
     result = template_code
