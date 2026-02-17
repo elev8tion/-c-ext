@@ -221,6 +221,9 @@ class CodeExtractMenubarApp:
 
     def run(self):
         """Start the menubar app."""
+        # Hide Python from dock — run as menubar-only (Accessory = no dock, but allows menubar)
+        from AppKit import NSApplicationActivationPolicyAccessory
+        NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyAccessory)
         self.app.run()
 
 
@@ -286,7 +289,7 @@ def create_app_bundle():
     <string>10.15</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
-    <key>LSUIElement</key>
+    <key>NSHighResolutionCapable</key>
     <true/>
 </dict>
 </plist>
