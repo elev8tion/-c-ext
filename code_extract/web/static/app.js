@@ -15,6 +15,24 @@ const app = (() => {
   let healthData = null;     // Phase 4: global health
   let langBreakdown = null;  // Phase 4: language breakdown
 
+  // Remix Board state
+  let remixPalette = [];       // [{scan_id, project_name, source_dir, items}]
+  let remixCanvas = [];        // [{scan_id, item_id, name, type, language, project_name, parent}]
+  let remixConflicts = [];     // from server
+  let remixResolutions = {};   // "scan_id::item_id" → new_name
+  let remixValidation = { errors: [], warnings: [], conflicts: [], is_buildable: true };
+
+  // Language compatibility groups (mirrors backend LANGUAGE_GROUPS)
+  const REMIX_LANGUAGE_GROUPS = {
+    javascript: 'js_ts', typescript: 'js_ts',
+    java: 'jvm', kotlin: 'jvm',
+    python: 'python', dart: 'dart', rust: 'rust', go: 'go',
+    cpp: 'cpp', ruby: 'ruby', swift: 'swift', csharp: 'csharp', sql: 'sql',
+  };
+  const REMIX_SQL_TYPES = new Set([
+    'table', 'view', 'trigger', 'policy', 'migration', 'index', 'sql_function',
+  ]);
+
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => document.querySelectorAll(sel);
 
@@ -111,8 +129,10 @@ const app = (() => {
       }, 100);
     }
 
-    // Lazy-load tab data if scan exists
-    if (currentScan && (!tabLoaded[tabName] || tabLoaded[tabName] === 'cached')) {
+    // Lazy-load tab data if scan exists (remix loads independently of currentScan)
+    if (tabName === 'remix') {
+      loadRemix();
+    } else if (currentScan && (!tabLoaded[tabName] || tabLoaded[tabName] === 'cached')) {
       loadTabData(tabName);
     }
   }
@@ -128,6 +148,7 @@ const app = (() => {
       clone: loadClone,
       boilerplate: loadBoilerplate,
       migration: loadMigration,
+      remix: loadRemix,
     };
     const loader = loaders[tabName];
     if (loader) loader();
@@ -224,7 +245,7 @@ const app = (() => {
 
             fetchItemStats(scanId);
             loadDetailCards();
-            ['catalog', 'architecture', 'health', 'docs', 'deadcode', 'tour', 'clone', 'boilerplate', 'migration'].forEach(tab => {
+            ['catalog', 'architecture', 'health', 'docs', 'deadcode', 'tour', 'clone', 'boilerplate', 'migration', 'remix'].forEach(tab => {
               loadTabData(tab);
             });
             return; // stop polling
@@ -262,6 +283,9 @@ const app = (() => {
     boilerplateVariants = [];
     variantCounter = 0;
     migrationPatterns = [];
+    remixCanvas = [];
+    remixConflicts = [];
+    remixResolutions = {};
 
     try {
       const res = await fetch('/api/scan', {
@@ -2118,6 +2142,9 @@ const app = (() => {
       boilerplateVariants = [];
       variantCounter = 0;
       migrationPatterns = [];
+      remixCanvas = [];
+      remixConflicts = [];
+      remixResolutions = {};
       Object.keys(tabLoaded).forEach(k => delete tabLoaded[k]);
 
       $('#results-body').innerHTML = '';
@@ -2128,7 +2155,7 @@ const app = (() => {
       $('#download-link').classList.add('hidden');
       hideProgress();
 
-      const tabPanels = ['catalog', 'arch', 'health', 'docs', 'deadcode', 'tour', 'clone', 'boilerplate', 'migration'];
+      const tabPanels = ['catalog', 'arch', 'health', 'docs', 'deadcode', 'tour', 'clone', 'boilerplate', 'migration', 'remix'];
       tabPanels.forEach(t => {
         const empty = $(`#${t}-empty`);
         const content = $(`#${t}-content`);
@@ -2192,6 +2219,486 @@ const app = (() => {
   }
 
   // ═══════════════════════════════════════════════
+  // REMIX BOARD
+  // ═══════════════════════════════════════════════
+
+  // Project color palette for visual distinction
+  const REMIX_PROJECT_COLORS = [
+    '#00f0ff', '#ff3366', '#a78bfa', '#00ff9d', '#ffb800',
+    '#fb923c', '#38bdf8', '#f472b6', '#a3e635', '#e879f9',
+  ];
+  let _remixProjectColorMap = {};
+
+  function _remixColor(projectName) {
+    if (!_remixProjectColorMap[projectName]) {
+      const idx = Object.keys(_remixProjectColorMap).length % REMIX_PROJECT_COLORS.length;
+      _remixProjectColorMap[projectName] = REMIX_PROJECT_COLORS[idx];
+    }
+    return _remixProjectColorMap[projectName];
+  }
+
+  async function loadRemix() {
+    try {
+      const res = await fetch('/api/remix/palette');
+      if (!res.ok) return;
+      const data = await res.json();
+      remixPalette = data.palette || [];
+
+      const emptyEl = $('#remix-empty');
+      const contentEl = $('#remix-content');
+
+      if (remixPalette.length > 0) {
+        if (emptyEl) emptyEl.classList.add('hidden');
+        if (contentEl) contentEl.classList.remove('hidden');
+        renderRemixPalette();
+        renderRemixCanvas();
+        initRemixDropZone();
+      } else {
+        if (emptyEl) emptyEl.classList.remove('hidden');
+        if (contentEl) contentEl.classList.add('hidden');
+      }
+      tabLoaded['remix'] = true;
+    } catch (_) { /* ignore */ }
+  }
+
+  function renderRemixPalette() {
+    const el = $('#remix-palette');
+    if (!el) return;
+
+    if (remixPalette.length === 0) {
+      el.innerHTML = '<div class="text-xs p-2" style="color:var(--text-muted)">No scans available</div>';
+      return;
+    }
+
+    el.innerHTML = remixPalette.map(proj => {
+      const color = _remixColor(proj.project_name);
+      const items = proj.items.map(item => `
+        <div class="remix-palette-item"
+             draggable="true"
+             data-scan-id="${esc(proj.scan_id)}"
+             data-item-id="${esc(item.item_id)}"
+             data-name="${esc(item.name)}"
+             data-type="${esc(item.type)}"
+             data-language="${esc(item.language)}"
+             data-parent="${esc(item.parent || '')}"
+             data-project="${esc(proj.project_name)}">
+          <span style="${typeBadgeStyle(item.type)} font-size:0.5625rem; padding:0 0.25rem; border-radius:0.125rem">${esc(item.type)}</span>
+          <span>${esc(item.name)}</span>
+        </div>
+      `).join('');
+
+      return `
+        <div class="remix-palette-project expanded">
+          <div class="remix-palette-header" onclick="this.parentElement.classList.toggle('expanded')">
+            <span><span style="color:${color}; margin-right:4px">&#x25CF;</span>${esc(proj.project_name)}</span>
+            <span style="color:var(--text-muted); font-size:0.625rem">${proj.items.length}</span>
+          </div>
+          <div class="remix-palette-items">${items}</div>
+        </div>
+      `;
+    }).join('');
+
+    // Attach drag listeners
+    el.querySelectorAll('.remix-palette-item').forEach(item => {
+      item.addEventListener('dragstart', onRemixDragStart);
+      item.addEventListener('dragend', onRemixDragEnd);
+    });
+  }
+
+  function initRemixDropZone() {
+    const canvas = $('#remix-canvas');
+    if (!canvas || canvas._remixInited) return;
+    canvas._remixInited = true;
+
+    canvas.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      canvas.classList.add('drag-over');
+    });
+
+    canvas.addEventListener('dragleave', (e) => {
+      if (!canvas.contains(e.relatedTarget)) {
+        canvas.classList.remove('drag-over');
+      }
+    });
+
+    canvas.addEventListener('drop', (e) => {
+      e.preventDefault();
+      canvas.classList.remove('drag-over');
+      try {
+        const data = JSON.parse(e.dataTransfer.getData('application/json'));
+        if (data && data.scan_id && data.item_id) {
+          addToRemixCanvas(data);
+        }
+      } catch (_) { /* ignore bad drops */ }
+    });
+  }
+
+  function onRemixDragStart(e) {
+    const el = e.currentTarget;
+    const data = {
+      scan_id: el.dataset.scanId,
+      item_id: el.dataset.itemId,
+      name: el.dataset.name,
+      type: el.dataset.type,
+      language: el.dataset.language,
+      parent: el.dataset.parent || '',
+      project_name: el.dataset.project,
+    };
+    e.dataTransfer.setData('application/json', JSON.stringify(data));
+    e.dataTransfer.effectAllowed = 'copy';
+    el.classList.add('dragging');
+  }
+
+  function onRemixDragEnd(e) {
+    e.currentTarget.classList.remove('dragging');
+  }
+
+  function addToRemixCanvas(data) {
+    // Dedupe
+    const exists = remixCanvas.some(c => c.scan_id === data.scan_id && c.item_id === data.item_id);
+    if (exists) return;
+
+    remixCanvas.push({
+      scan_id: data.scan_id,
+      item_id: data.item_id,
+      name: data.name,
+      type: data.type,
+      language: data.language,
+      parent: data.parent || '',
+      project_name: data.project_name,
+    });
+    // Clear any stale conflicts
+    remixConflicts = [];
+    remixResolutions = {};
+    renderRemixCanvas();
+    remixQuickValidate();
+  }
+
+  function removeFromRemixCanvas(scanId, itemId) {
+    remixCanvas = remixCanvas.filter(c => !(c.scan_id === scanId && c.item_id === itemId));
+    remixConflicts = [];
+    remixResolutions = {};
+    renderRemixCanvas();
+    remixQuickValidate();
+  }
+
+  function remixClearCanvas() {
+    remixCanvas = [];
+    remixConflicts = [];
+    remixResolutions = {};
+    remixValidation = { errors: [], warnings: [], conflicts: [], is_buildable: true };
+    renderRemixCanvas();
+    renderRemixValidationBar();
+    const conflictsEl = $('#remix-conflicts');
+    if (conflictsEl) conflictsEl.classList.add('hidden');
+  }
+
+  function renderRemixCanvas() {
+    const placeholder = $('#remix-canvas-placeholder');
+    const grid = $('#remix-canvas-grid');
+    const countEl = $('#remix-count');
+    const buildBtn = $('#remix-build-btn');
+
+    if (countEl) countEl.textContent = `${remixCanvas.length} item${remixCanvas.length !== 1 ? 's' : ''}`;
+    if (buildBtn) buildBtn.disabled = remixCanvas.length === 0;
+
+    if (remixCanvas.length === 0) {
+      if (placeholder) placeholder.classList.remove('hidden');
+      if (grid) { grid.classList.add('hidden'); grid.innerHTML = ''; }
+      return;
+    }
+
+    if (placeholder) placeholder.classList.add('hidden');
+    if (!grid) return;
+    grid.classList.remove('hidden');
+
+    grid.innerHTML = remixCanvas.map(c => {
+      const color = _remixColor(c.project_name);
+      return `
+        <div class="remix-card" onclick="app.showRemixPreview('${esc(c.scan_id)}', '${esc(c.item_id)}')">
+          <button class="remix-card-remove" onclick="event.stopPropagation(); app.removeFromRemixCanvas('${esc(c.scan_id)}', '${esc(c.item_id)}')">&times;</button>
+          <div class="flex items-center gap-1.5 mb-1">
+            <span style="${typeBadgeStyle(c.type)} font-size:0.5625rem; padding:0.0625rem 0.375rem; border-radius:0.25rem">${esc(c.type)}</span>
+            <span style="color:var(--text-muted); font-size:0.5625rem">${esc(c.language)}</span>
+          </div>
+          <div class="remix-card-name">${esc(c.name)}</div>
+          <div class="remix-card-project" style="background:${color}15; color:${color}">${esc(c.project_name)}</div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  async function remixDetectConflicts() {
+    if (remixCanvas.length === 0) return;
+    setStatus('Checking conflicts...');
+
+    try {
+      const res = await fetch('/api/remix/detect-conflicts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          canvas_items: remixCanvas.map(c => ({ scan_id: c.scan_id, item_id: c.item_id })),
+        }),
+      });
+      if (!res.ok) throw new Error('Conflict detection failed');
+      const data = await res.json();
+      remixConflicts = data.conflicts || [];
+      renderRemixConflicts();
+      setStatus(remixConflicts.length > 0
+        ? `${remixConflicts.length} naming conflict(s) found`
+        : 'No conflicts detected');
+    } catch (err) {
+      setStatus(`Error: ${err.message}`);
+    }
+  }
+
+  function renderRemixConflicts() {
+    const el = $('#remix-conflicts');
+    if (!el) return;
+
+    if (remixConflicts.length === 0) {
+      el.classList.add('hidden');
+      el.innerHTML = '';
+      return;
+    }
+
+    el.classList.remove('hidden');
+    el.innerHTML = `
+      <div class="text-xs font-semibold mb-2" style="color: var(--warning)">
+        &#x26A0; ${remixConflicts.length} Naming Conflict${remixConflicts.length > 1 ? 's' : ''} — rename to resolve
+      </div>
+      ${remixConflicts.map(conflict => conflict.items.map(item => `
+        <div class="remix-conflict-row">
+          <span class="conflict-name">${esc(conflict.name)}</span>
+          <span class="conflict-project">${esc(item.project_name)}</span>
+          <input type="text" class="glass-input px-2 py-1 text-xs"
+            placeholder="New name..."
+            value="${esc(conflict.name)}"
+            data-composite-key="${esc(item.composite_key)}"
+            oninput="app.onRemixConflictRename(this)">
+        </div>
+      `).join('')).join('')}
+    `;
+  }
+
+  function onRemixConflictRename(input) {
+    const key = input.dataset.compositeKey;
+    const newName = input.value.trim();
+    if (newName) {
+      remixResolutions[key] = newName;
+    } else {
+      delete remixResolutions[key];
+    }
+  }
+
+  // ── Remix validation ─────────────────────────────────────
+
+  function remixQuickValidate() {
+    const errors = [];
+    const warnings = [];
+
+    if (remixCanvas.length === 0) {
+      remixValidation = { errors: [], warnings: [], conflicts: [], is_buildable: true };
+      renderRemixValidationBar();
+      return;
+    }
+
+    // Rule 1: Language coherence (exclude SQL items)
+    const langGroups = {};
+    for (const c of remixCanvas) {
+      const group = REMIX_LANGUAGE_GROUPS[c.language] || c.language;
+      if (group === 'sql') continue;
+      (langGroups[group] = langGroups[group] || []).push(c.name);
+    }
+    const groupKeys = Object.keys(langGroups);
+    if (groupKeys.length > 1) {
+      errors.push({
+        severity: 'error', rule: 'language_coherence',
+        message: `Mixed language groups: ${groupKeys.join(', ')}. Items must share a compatible language.`,
+        items: groupKeys,
+      });
+    }
+
+    // Rule 2: Orphaned methods
+    const namesOnCanvas = new Set(remixCanvas.map(c => c.name));
+    for (const c of remixCanvas) {
+      if (c.type === 'method' && c.parent && !namesOnCanvas.has(c.parent)) {
+        warnings.push({
+          severity: 'warning', rule: 'orphaned_method',
+          message: `Method '${c.name}' needs parent class '${c.parent}' on canvas.`,
+          items: [c.name],
+        });
+      }
+    }
+
+    // Rule 4: SQL isolation
+    const hasSql = remixCanvas.some(c => REMIX_SQL_TYPES.has(c.type));
+    const hasRuntime = remixCanvas.some(c => !REMIX_SQL_TYPES.has(c.type));
+    if (hasSql && hasRuntime) {
+      errors.push({
+        severity: 'error', rule: 'sql_isolation',
+        message: 'SQL blocks cannot mix with runtime code blocks.',
+        items: [],
+      });
+    }
+
+    remixValidation = { errors, warnings, conflicts: [], is_buildable: errors.length === 0 };
+    renderRemixValidationBar();
+  }
+
+  function renderRemixValidationBar() {
+    const bar = $('#remix-validation-bar');
+    const details = $('#remix-validation-details');
+    if (!bar) return;
+
+    if (remixCanvas.length === 0) {
+      bar.classList.add('hidden');
+      if (details) details.classList.add('hidden');
+      return;
+    }
+
+    bar.classList.remove('hidden', 'validation-ok', 'validation-warn', 'validation-error');
+
+    const { errors, warnings } = remixValidation;
+    const buildBtn = $('#remix-build-btn');
+
+    if (errors.length > 0) {
+      bar.classList.add('validation-error');
+      bar.innerHTML = `<span>&#x2718;</span> <span>${errors.length} error${errors.length > 1 ? 's' : ''} — build blocked</span>`;
+      if (buildBtn) buildBtn.disabled = true;
+    } else if (warnings.length > 0) {
+      bar.classList.add('validation-warn');
+      bar.innerHTML = `<span>&#x26A0;</span> <span>${warnings.length} warning${warnings.length > 1 ? 's' : ''} — build allowed</span>`;
+      if (buildBtn) buildBtn.disabled = false;
+    } else {
+      bar.classList.add('validation-ok');
+      bar.innerHTML = `<span>&#x2714;</span> <span>Compatible</span>`;
+      if (buildBtn) buildBtn.disabled = false;
+    }
+
+    bar.onclick = () => toggleRemixValidationDetails();
+  }
+
+  function toggleRemixValidationDetails() {
+    const details = $('#remix-validation-details');
+    if (!details) return;
+
+    if (!details.classList.contains('hidden')) {
+      details.classList.add('hidden');
+      return;
+    }
+
+    const allIssues = [...remixValidation.errors, ...remixValidation.warnings];
+    if (allIssues.length === 0) {
+      details.classList.add('hidden');
+      return;
+    }
+
+    details.classList.remove('hidden');
+    details.innerHTML = allIssues.map(issue => {
+      const cls = issue.severity === 'error' ? 'validation-detail-error' : 'validation-detail-warn';
+      const icon = issue.severity === 'error' ? '&#x2718;' : '&#x26A0;';
+      return `<div class="validation-detail ${cls}"><span>${icon}</span> <span>${esc(issue.message)}</span></div>`;
+    }).join('');
+  }
+
+  async function remixCheckCompatibility() {
+    if (remixCanvas.length === 0) return;
+    setStatus('Checking compatibility...');
+
+    try {
+      const res = await fetch('/api/remix/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          canvas_items: remixCanvas.map(c => ({ scan_id: c.scan_id, item_id: c.item_id })),
+          full: true,
+        }),
+      });
+      if (!res.ok) throw new Error('Compatibility check failed');
+      const data = await res.json();
+      remixValidation = {
+        errors: data.errors || [],
+        warnings: data.warnings || [],
+        conflicts: data.conflicts || [],
+        is_buildable: data.is_buildable,
+      };
+      renderRemixValidationBar();
+
+      // Also update conflicts panel for naming conflicts
+      remixConflicts = data.conflicts || [];
+      renderRemixConflicts();
+
+      const total = (data.errors || []).length + (data.warnings || []).length;
+      setStatus(total > 0
+        ? `${total} issue${total > 1 ? 's' : ''} found`
+        : 'All checks passed — compatible');
+    } catch (err) {
+      setStatus(`Error: ${err.message}`);
+    }
+  }
+
+  async function remixBuild() {
+    if (remixCanvas.length === 0) return;
+
+    const projectName = ($('#remix-project-name') || {}).value || 'remix-package';
+    const includeDeps = ($('#remix-include-deps') || {}).checked || false;
+
+    setStatus('Building remix package...');
+    showProgress();
+
+    // Build resolutions array
+    const resolutions = Object.entries(remixResolutions).map(([k, v]) => ({
+      composite_key: k,
+      new_name: v,
+    }));
+
+    try {
+      const res = await fetch('/api/remix/build', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          canvas_items: remixCanvas.map(c => ({ scan_id: c.scan_id, item_id: c.item_id })),
+          resolutions,
+          project_name: projectName,
+          include_deps: includeDeps,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Build failed');
+      }
+      const data = await res.json();
+      showDownload(data.download_url);
+      setStatus(`Remix built — ${data.files_created} files`);
+    } catch (err) {
+      hideProgress();
+      setStatus(`Error: ${err.message}`);
+    }
+  }
+
+  async function showRemixPreview(scanId, itemId) {
+    try {
+      const res = await fetch(`/api/preview/${encodeURIComponent(itemId)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+
+      const previewPanel = $('#remix-preview');
+      const nameEl = $('#remix-preview-name');
+      const codeEl = $('#remix-preview-code');
+
+      if (nameEl) nameEl.textContent = data.name;
+      if (codeEl) {
+        codeEl.textContent = data.code;
+        codeEl.className = `text-xs language-${data.language}`;
+        hljs.highlightElement(codeEl);
+      }
+      if (previewPanel) previewPanel.classList.remove('hidden');
+    } catch (_) { /* ignore */ }
+  }
+
+  // ═══════════════════════════════════════════════
   // INIT
   // ═══════════════════════════════════════════════
 
@@ -2210,5 +2717,7 @@ const app = (() => {
     detectBoilerplate, generateFromTemplate,
     addCustomVariable, addVariant, downloadVariant, downloadAllGenerated,
     detectMigrations,
+    removeFromRemixCanvas, remixDetectConflicts, remixCheckCompatibility,
+    remixBuild, remixClearCanvas, onRemixConflictRename, showRemixPreview,
   };
 })();
