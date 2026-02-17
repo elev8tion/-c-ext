@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
 
 from code_extract.web.api import router
@@ -20,6 +20,13 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 def create_app() -> FastAPI:
     app = FastAPI(title="code-extract", version="0.3.0")
+
+    @app.middleware("http")
+    async def no_cache_static(request: Request, call_next):
+        response: Response = await call_next(request)
+        if request.url.path.endswith((".js", ".css", ".html")) or request.url.path == "/":
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 
     # Core API
     app.include_router(router)
