@@ -120,10 +120,42 @@ class CodeExtractMenubarApp:
             "--no-open",
         ]
 
+    def _is_port_responding(self) -> bool:
+        """Check if the server port is already responding."""
+        import urllib.request
+        import urllib.error
+        try:
+            req = urllib.request.urlopen(
+                f"http://localhost:{self.server_port}/api/scans", timeout=2
+            )
+            return req.status in (200, 404)
+        except (urllib.error.URLError, OSError):
+            return False
+
     def start_server(self, _=None):
         """Start the code-extract server."""
         if self.is_running:
             rumps.notification(APP_NAME, "Server already running", "")
+            return
+
+        # Adopt an already-running server on our port
+        if self._is_port_responding():
+            self.server_process = None  # no child process to manage
+            self.is_running = True
+            self.update_status()
+
+            if self.config.get("auto_open_browser", True):
+                threading.Timer(0.5, self.open_browser).start()
+
+            if self.config.get("ui", {}).get("notifications", True):
+                rumps.notification(
+                    APP_NAME,
+                    "Server already running — connected",
+                    f"http://localhost:{self.server_port}",
+                )
+
+            # Monitor via polling instead of process watch
+            threading.Thread(target=self._monitor_server, daemon=True).start()
             return
 
         try:
@@ -177,31 +209,45 @@ class CodeExtractMenubarApp:
         return False
 
     def _monitor_server(self):
-        """Watch for server process exit."""
+        """Watch for server exit (child process or adopted external server)."""
         if self.server_process:
+            # We own the process — wait for it to exit
             self.server_process.wait()
             self.is_running = False
             self.update_status()
             if self.config.get("ui", {}).get("notifications", True):
                 rumps.notification(APP_NAME, "Server stopped", "Process terminated")
+        else:
+            # Adopted external server — poll the port
+            while self.is_running:
+                time.sleep(5)
+                if not self._is_port_responding():
+                    self.is_running = False
+                    self.update_status()
+                    if self.config.get("ui", {}).get("notifications", True):
+                        rumps.notification(APP_NAME, "Server stopped", "Port no longer responding")
 
     def stop_server(self, _=None):
         """Stop the server."""
         if not self.is_running and not self.server_process:
             return
 
-        try:
-            if self.server_process:
+        if self.server_process:
+            # We own the child process — kill it
+            try:
                 os.killpg(os.getpgid(self.server_process.pid), signal.SIGTERM)
                 self.server_process.wait(timeout=5)
-        except (ProcessLookupError, subprocess.TimeoutExpired):
-            if self.server_process:
+            except (ProcessLookupError, subprocess.TimeoutExpired):
                 try:
                     os.killpg(os.getpgid(self.server_process.pid), signal.SIGKILL)
                 except ProcessLookupError:
                     pass
-        except Exception as e:
-            rumps.notification(APP_NAME, "Error stopping server", str(e))
+            except Exception as e:
+                rumps.notification(APP_NAME, "Error stopping server", str(e))
+        else:
+            # Adopted external server — just disconnect, don't kill it
+            if self.config.get("ui", {}).get("notifications", True):
+                rumps.notification(APP_NAME, "Disconnected", "External server still running")
 
         self.is_running = False
         self.server_process = None
