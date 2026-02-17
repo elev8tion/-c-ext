@@ -20,6 +20,11 @@ web = [
     "uvicorn[standard]>=0.20",
     "watchfiles>=0.20",
 ]
+macos = [
+    "rumps>=0.4",
+    "pyobjc-framework-Cocoa>=9.0",
+    "psutil>=5.9",
+]
 all = [
     "code-extract[format,treesitter,web]",
 ]
