@@ -133,7 +133,8 @@ class TestArchitecture:
         graph = builder.build(blocks)
         result = generate_architecture(graph)
         assert "modules" in result
-        assert "mermaid" in result
+        assert "elements" in result
+        assert "stats" in result
         assert len(result["modules"]) >= 1
 
 

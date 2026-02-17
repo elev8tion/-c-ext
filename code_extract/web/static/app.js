@@ -23,6 +23,11 @@ const app = (() => {
     mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' });
   }
 
+  // --- Register cytoscape-dagre plugin ---
+  if (window.cytoscape && window.cytoscapeDagre) {
+    cytoscape.use(cytoscapeDagre);
+  }
+
   // --- Badge colors by type (inline style objects) ---
   const TYPE_COLORS = {
     function:     { bg: 'rgba(0,255,157,0.12)',  text: '#00ff9d' },
@@ -94,6 +99,16 @@ const app = (() => {
     const filters = $('#sidebar-filters');
     if (filters) {
       filters.style.display = tabName === 'scan' ? '' : 'none';
+    }
+
+    // Re-layout architecture graph when switching to its tab (may have been initialized while hidden with 0x0 container)
+    if (tabName === 'architecture' && archCy) {
+      setTimeout(() => {
+        archCy.resize();
+        const cfg = Object.assign({}, ARCH_LAYOUTS[currentArchLayout] || ARCH_LAYOUTS.dagre, { animate: false });
+        archCy.layout(cfg).run();
+        archCy.fit(undefined, 30);
+      }, 100);
     }
 
     // Lazy-load tab data if scan exists
@@ -709,12 +724,32 @@ const app = (() => {
   }
 
   // ═══════════════════════════════════════════════
-  // TAB: ARCHITECTURE
+  // TAB: ARCHITECTURE (Cytoscape.js)
   // ═══════════════════════════════════════════════
+
+  let archCy = null;  // Cytoscape instance
+  let currentArchLayout = 'dagre';
+
+  const ARCH_LAYOUTS = {
+    dagre:  { name: 'dagre', rankDir: 'TB', nodeSep: 50, rankSep: 70, padding: 30, animate: true, animationDuration: 400 },
+    cose:   { name: 'cose', idealEdgeLength: 100, nodeRepulsion: 6000, nodeOverlap: 20, padding: 30, animate: true, animationDuration: 400 },
+    circle: { name: 'circle', padding: 30, animate: true, animationDuration: 400 },
+  };
+
+  const ARCH_TYPE_COLORS = {
+    module:    '#f78166',
+    class:     '#d2a8ff',
+    component: '#79c0ff',
+    function:  '#7ee787',
+    method:    '#ffa657',
+    overflow:  '#484f58',
+  };
 
   async function loadArchitecture() {
     if (!currentScan) return;
     setStatus('Analyzing architecture...');
+    const loadingEl = $('#arch-loading');
+    if (loadingEl) loadingEl.classList.remove('hidden');
 
     try {
       const res = await fetch('/api/analysis/architecture', {
@@ -729,6 +764,8 @@ const app = (() => {
       setStatus('Architecture loaded');
     } catch (err) {
       setStatus(`Architecture error: ${err.message}`);
+    } finally {
+      if (loadingEl) loadingEl.classList.add('hidden');
     }
   }
 
@@ -736,15 +773,181 @@ const app = (() => {
     $('#arch-empty').classList.add('hidden');
     $('#arch-content').classList.remove('hidden');
 
-    const container = $('#arch-diagram');
-    container.innerHTML = `<pre class="mermaid">${data.mermaid}</pre>`;
-    if (window.mermaid) {
-      mermaid.run({ nodes: container.querySelectorAll('.mermaid') });
+    // Stats bar
+    const s = data.stats || {};
+    $('#arch-stats').innerHTML = `${s.total_items || 0} items &middot; ${s.total_modules || 0} modules &middot; ${s.total_edges || 0} edges &middot; ${s.cross_module_edges || 0} cross-module`;
+
+    // Destroy previous instance
+    if (archCy) { archCy.destroy(); archCy = null; }
+
+    // Init Cytoscape
+    archCy = cytoscape({
+      container: $('#arch-diagram'),
+      elements: data.elements || [],
+      minZoom: 0.15,
+      maxZoom: 4,
+      wheelSensitivity: 0.3,
+      style: [
+        // Compound/parent nodes (directories)
+        { selector: 'node:parent', style: {
+          'background-color': 'rgba(255,255,255,0.02)',
+          'background-opacity': 1,
+          'border-color': 'rgba(255,255,255,0.08)',
+          'border-width': 1.5,
+          'shape': 'roundrectangle',
+          'padding': '20px',
+          'label': 'data(label)',
+          'text-valign': 'top',
+          'text-halign': 'center',
+          'font-size': '13px',
+          'font-weight': 'bold',
+          'color': 'rgba(255,255,255,0.45)',
+          'text-margin-y': -6,
+        }},
+        // Leaf nodes (sized by connections)
+        { selector: 'node:child', style: {
+          'background-color': function(ele) { return ARCH_TYPE_COLORS[ele.data('type')] || '#8b949e'; },
+          'width': function(ele) { var c = ele.data('connections') || 0; return Math.min(52, Math.max(28, 28 + c * 3)); },
+          'height': function(ele) { var c = ele.data('connections') || 0; return Math.min(52, Math.max(28, 28 + c * 3)); },
+          'label': 'data(label)',
+          'text-valign': 'bottom',
+          'text-halign': 'center',
+          'font-size': '9px',
+          'color': 'rgba(255,255,255,0.7)',
+          'text-margin-y': 6,
+          'border-width': 2,
+          'border-color': '#08090d',
+          'text-outline-color': '#08090d',
+          'text-outline-width': 2,
+          'transition-property': 'background-color, border-color, width, height, opacity',
+          'transition-duration': '0.2s',
+        }},
+        // Overflow nodes (+N more)
+        { selector: 'node[type="overflow"]', style: {
+          'background-color': '#21262d',
+          'border-color': '#30363d',
+          'border-width': 1,
+          'border-style': 'dashed',
+          'width': 28,
+          'height': 28,
+          'font-size': '8px',
+          'color': 'rgba(255,255,255,0.35)',
+        }},
+        // Edges
+        { selector: 'edge', style: {
+          'width': 1.2,
+          'line-color': 'rgba(255,255,255,0.1)',
+          'target-arrow-color': 'rgba(255,255,255,0.1)',
+          'target-arrow-shape': 'triangle',
+          'arrow-scale': 0.7,
+          'curve-style': 'bezier',
+          'opacity': 0.5,
+          'transition-property': 'line-color, target-arrow-color, opacity, width',
+          'transition-duration': '0.2s',
+        }},
+        // Cross-module edges (thickness by weight)
+        { selector: 'edge[edgeType="cross_module"]', style: {
+          'width': function(ele) { var w = ele.data('weight') || 1; return Math.min(5, Math.max(1.5, 1 + w * 0.5)); },
+          'line-color': 'rgba(0,240,255,0.15)',
+          'target-arrow-color': 'rgba(0,240,255,0.15)',
+          'line-style': 'dashed',
+          'opacity': 0.6,
+        }},
+        // Highlighted states
+        { selector: 'node.highlighted', style: {
+          'border-color': '#00f0ff',
+          'border-width': 3,
+          'width': function(ele) { var c = ele.data('connections') || 0; return Math.min(52, Math.max(28, 28 + c * 3)) + 8; },
+          'height': function(ele) { var c = ele.data('connections') || 0; return Math.min(52, Math.max(28, 28 + c * 3)) + 8; },
+          'z-index': 999,
+        }},
+        { selector: 'node.neighbor', style: {
+          'border-color': '#00f0ff',
+          'border-width': 2,
+          'opacity': 1,
+        }},
+        { selector: 'edge.highlighted', style: {
+          'line-color': '#00f0ff',
+          'target-arrow-color': '#00f0ff',
+          'opacity': 1,
+          'width': 2.5,
+          'z-index': 999,
+        }},
+        { selector: 'node.dimmed', style: { 'opacity': 0.12 }},
+        { selector: 'edge.dimmed', style: { 'opacity': 0.04 }},
+      ],
+      layout: { name: 'preset' },
+    });
+
+    // ── Tooltip ──
+    const tooltip = $('#arch-tooltip');
+
+    archCy.on('mouseover', 'node:child', function(e) {
+      const d = e.target.data();
+      if (d.type === 'overflow') return;
+      const color = ARCH_TYPE_COLORS[d.type] || '#8b949e';
+      const inE = e.target.incomers('edge').length;
+      const outE = e.target.outgoers('edge').length;
+      tooltip.innerHTML = `
+        <div style="font-weight:600;font-size:13px;color:#f0f6fc;margin-bottom:3px">${esc(d.label)}</div>
+        <span style="display:inline-block;padding:1px 8px;border-radius:12px;font-size:10px;font-weight:500;background:${color}22;color:${color}">${d.type}</span>
+        <div style="color:#8b949e;font-size:11px;margin-top:5px">${d.file ? esc(d.file) : ''}</div>
+        <div style="color:#8b949e;font-size:11px;margin-top:2px">${outE} outgoing &middot; ${inE} incoming</div>`;
+      tooltip.style.display = 'block';
+    });
+
+    archCy.on('mousemove', 'node:child', function(e) {
+      const p = e.renderedPosition;
+      const container = archCy.container();
+      const cw = container.clientWidth;
+      const ch = container.clientHeight;
+      const tw = 300; // max-width of tooltip
+      const th = 100; // estimated tooltip height
+      let x = p.x + 18;
+      let y = p.y - 8;
+      if (x + tw > cw) x = p.x - tw - 10;
+      if (y + th > ch) y = ch - th - 8;
+      if (y < 0) y = 4;
+      tooltip.style.left = x + 'px';
+      tooltip.style.top  = y + 'px';
+    });
+
+    archCy.on('mouseout', 'node:child', function() {
+      tooltip.style.display = 'none';
+    });
+
+    // ── Click to focus ──
+    archCy.on('tap', 'node:child', function(e) {
+      const node = e.target;
+      archResetHighlight();
+      archCy.elements().addClass('dimmed');
+      node.removeClass('dimmed').addClass('highlighted');
+      const edges = node.connectedEdges();
+      edges.removeClass('dimmed').addClass('highlighted');
+      const neighbors = node.neighborhood('node');
+      neighbors.removeClass('dimmed').addClass('neighbor');
+      node.ancestors().removeClass('dimmed');
+      neighbors.ancestors().removeClass('dimmed');
+    });
+
+    archCy.on('tap', function(e) {
+      if (e.target === archCy) archResetHighlight();
+    });
+
+    // If the tab is currently visible, force resize + re-layout after DOM settles
+    if (activeTab === 'architecture') {
+      setTimeout(() => {
+        archCy.resize();
+        archCy.layout(ARCH_LAYOUTS[currentArchLayout] || ARCH_LAYOUTS.dagre).run();
+      }, 100);
     }
 
+    // ── Module sidebar ──
     const modList = $('#arch-modules');
-    modList.innerHTML = (data.modules || []).map(m => `
-      <div class="module-item" onclick="this.classList.toggle('expanded')">
+    modList.innerHTML = (data.modules || []).map(m => {
+      const dirId = _safeId(m.directory);
+      return `
+      <div class="module-item" data-dir-id="${dirId}">
         <div class="module-item-header">
           <span>${esc(m.directory)}</span>
           <span class="module-item-count">${m.item_count} items</span>
@@ -752,16 +955,90 @@ const app = (() => {
         <div class="module-item-body">
           ${(m.items || []).map(i => `<div class="py-0.5">${esc(i.name)} <span style="color: var(--text-muted)">(${i.type})</span></div>`).join('')}
         </div>
-      </div>
-    `).join('');
+      </div>`;
+    }).join('');
+
+    // Single-click: toggle expand/collapse; Double-click: zoom to module in graph
+    modList.querySelectorAll('.module-item-header').forEach(header => {
+      header.addEventListener('click', () => {
+        header.parentElement.classList.toggle('expanded');
+      });
+      header.addEventListener('dblclick', (e) => {
+        e.preventDefault();
+        const dirId = header.parentElement.dataset.dirId;
+        if (!archCy || !dirId) return;
+        const compound = archCy.getElementById(dirId);
+        if (compound.empty()) return;
+        const targets = compound.union(compound.descendants());
+        archCy.animate({ fit: { eles: targets, padding: 40 } }, { duration: 400 });
+        // Flash cyan border on compound
+        compound.style('border-color', '#00f0ff');
+        compound.style('border-width', 3);
+        setTimeout(() => {
+          compound.style('border-color', 'rgba(255,255,255,0.08)');
+          compound.style('border-width', 1.5);
+        }, 600);
+      });
+    });
   }
 
-  function exportArchSVG() {
-    const svg = $('#arch-diagram svg');
-    if (!svg) return;
-    const blob = new Blob([svg.outerHTML], { type: 'image/svg+xml' });
-    downloadBlob(blob, 'architecture.svg');
+  function setArchLayout(name) {
+    if (!archCy) return;
+    currentArchLayout = name;
+    document.querySelectorAll('.arch-ctrl-btn[data-layout]').forEach(b => b.classList.remove('active'));
+    const btn = document.querySelector(`.arch-ctrl-btn[data-layout="${name}"]`);
+    if (btn) btn.classList.add('active');
+    archCy.layout(ARCH_LAYOUTS[name] || ARCH_LAYOUTS.dagre).run();
   }
+
+  function archFitView() {
+    if (archCy) archCy.fit(undefined, 30);
+  }
+
+  function archResetHighlight() {
+    if (archCy) archCy.elements().removeClass('highlighted neighbor dimmed');
+    const searchInput = $('#arch-search');
+    if (searchInput) searchInput.value = '';
+  }
+
+  function exportArchPNG() {
+    if (!archCy) return;
+    archResetHighlight();
+    const dataUrl = archCy.png({ bg: '#08090d', scale: 2, full: true });
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = 'architecture.png';
+    a.click();
+  }
+
+  // Match backend's _safe_id() — converts directory paths to valid Cytoscape node IDs
+  function _safeId(dirPath) {
+    return (dirPath || '').replace(/[^a-zA-Z0-9_-]/g, '_').replace(/^_+|_+$/g, '') || 'root';
+  }
+
+  // ── Search / filter nodes ──
+  function archSearchNodes(query) {
+    if (!archCy) return;
+    query = (query || '').trim().toLowerCase();
+    if (!query) { archResetHighlight(); return; }
+
+    archCy.elements().addClass('dimmed');
+    const matches = archCy.nodes().filter(n => {
+      const label = (n.data('label') || '').toLowerCase();
+      const file = (n.data('file') || '').toLowerCase();
+      return label.includes(query) || file.includes(query);
+    });
+    matches.removeClass('dimmed').addClass('highlighted');
+    // Show parent compounds of matched nodes
+    matches.ancestors().removeClass('dimmed');
+  }
+
+  // ── ESC key handler ──
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && activeTab === 'architecture') {
+      archResetHighlight();
+    }
+  });
 
   // ═══════════════════════════════════════════════
   // TAB: HEALTH
@@ -1238,7 +1515,8 @@ const app = (() => {
   return {
     scan, applyFilters, toggleAll, closePreview, extract,
     switchTab, smartExtract, createPackage, showPreview,
-    filterCatalog, exportCatalogHTML, exportArchSVG,
+    filterCatalog, exportCatalogHTML,
+    setArchLayout, archFitView, archResetHighlight, exportArchPNG, archSearchNodes,
     toggleDocsWatch, exportDocsMarkdown,
     runDiff, loadDeadCode,
     goToTourStep, tourPrev, tourNext, exportTourMarkdown,

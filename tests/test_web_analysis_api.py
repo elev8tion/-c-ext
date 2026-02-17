@@ -92,7 +92,8 @@ class TestArchitectureAPI:
         assert res.status_code == 200
         data = res.json()
         assert "modules" in data
-        assert "mermaid" in data
+        assert "elements" in data
+        assert "stats" in data
 
 
 # ── Health ────────────────────────────────────────────────────

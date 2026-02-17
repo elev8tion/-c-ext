@@ -17,6 +17,9 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.4/dist/cytoscape.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body class="bg-canvas text-[rgba(255,255,255,0.92)] h-screen flex flex-col overflow-hidden">
@@ -166,15 +169,43 @@
         <div id="arch-empty" class="tab-empty-state">
           <p>Scan a project first to view architecture</p>
         </div>
-        <div id="arch-content" class="hidden flex h-full">
-          <div class="w-[60%] overflow-auto p-4" style="border-right: 1px solid var(--border-default)">
-            <div class="flex items-center justify-between mb-3">
-              <h2 class="text-lg font-semibold" style="color: var(--text-primary)">Architecture Diagram</h2>
-              <button onclick="app.exportArchSVG()" class="neon-btn-outlined neon-btn-cyan text-xs py-1">Export SVG</button>
+        <div id="arch-content" class="hidden flex flex-1 h-full overflow-hidden">
+          <!-- Graph area -->
+          <div class="flex-1 relative overflow-hidden min-w-0" style="border-right: 1px solid var(--border-default)">
+            <!-- Controls overlay -->
+            <div id="arch-controls" class="arch-controls">
+              <button class="arch-ctrl-btn active" data-layout="dagre" onclick="app.setArchLayout('dagre')">Hierarchical</button>
+              <button class="arch-ctrl-btn" data-layout="cose" onclick="app.setArchLayout('cose')">Force</button>
+              <button class="arch-ctrl-btn" data-layout="circle" onclick="app.setArchLayout('circle')">Circular</button>
+              <div style="width:1px;height:20px;background:var(--border-default);flex-shrink:0"></div>
+              <button class="arch-ctrl-btn" onclick="app.archFitView()">Fit</button>
+              <button class="arch-ctrl-btn" onclick="app.archResetHighlight()">Reset</button>
+              <button class="arch-ctrl-btn" onclick="app.exportArchPNG()">Export PNG</button>
+              <input id="arch-search" type="text" placeholder="Search nodes..." class="arch-search-input" oninput="app.archSearchNodes(this.value)">
             </div>
-            <div id="arch-diagram" class="mermaid-container"></div>
+            <!-- Legend overlay -->
+            <div id="arch-legend" class="arch-legend">
+              <div class="arch-legend-title">Node Types</div>
+              <div class="arch-legend-item"><span class="arch-legend-dot" style="background:#f78166"></span>Module</div>
+              <div class="arch-legend-item"><span class="arch-legend-dot" style="background:#d2a8ff"></span>Class</div>
+              <div class="arch-legend-item"><span class="arch-legend-dot" style="background:#79c0ff"></span>Component</div>
+              <div class="arch-legend-item"><span class="arch-legend-dot" style="background:#7ee787"></span>Function</div>
+              <div class="arch-legend-item"><span class="arch-legend-dot" style="background:#ffa657"></span>Method</div>
+            </div>
+            <!-- Stats bar -->
+            <div id="arch-stats" class="arch-stats"></div>
+            <!-- Tooltip -->
+            <div id="arch-tooltip" class="arch-tooltip"></div>
+            <!-- Loading overlay -->
+            <div id="arch-loading" class="arch-loading hidden">
+              <div class="spinner" style="width:1.5rem;height:1.5rem"></div>
+              <span>Analyzing architecture...</span>
+            </div>
+            <!-- Cytoscape container -->
+            <div id="arch-diagram" style="position:absolute;top:0;left:0;right:0;bottom:0;"></div>
           </div>
-          <div class="w-[40%] overflow-y-auto p-4">
+          <!-- Module sidebar -->
+          <div class="w-72 overflow-y-auto p-4 shrink-0">
             <h3 class="text-sm font-semibold mb-3" style="color: var(--text-secondary)">Modules</h3>
             <div id="arch-modules"></div>
           </div>

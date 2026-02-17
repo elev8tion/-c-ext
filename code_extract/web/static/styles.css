@@ -421,6 +421,164 @@ tr.file-group-header {
   max-width: 100%;
 }
 
+/* ═══ Architecture Diagram (Cytoscape.js) ═══ */
+
+.arch-controls {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  display: flex;
+  gap: 6px;
+  z-index: 10;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
+  /* glass tint so buttons stay readable over graph */
+  background: rgba(8, 9, 13, 0.65);
+  backdrop-filter: blur(12px);
+  border-radius: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-default);
+}
+/* thin styled scrollbar for controls */
+.arch-controls::-webkit-scrollbar {
+  height: 3px;
+}
+.arch-controls::-webkit-scrollbar-track {
+  background: transparent;
+}
+.arch-controls::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.1);
+  border-radius: 2px;
+}
+.arch-controls::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.2);
+}
+.arch-ctrl-btn {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  padding: 4px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.arch-ctrl-btn:hover {
+  background: rgba(255,255,255,0.08);
+  color: var(--text-primary);
+}
+.arch-ctrl-btn.active {
+  background: var(--accent-dimmed);
+  border-color: rgba(0,240,255,0.3);
+  color: var(--accent);
+}
+
+.arch-legend {
+  position: absolute;
+  top: 56px;
+  left: 12px;
+  background: rgba(12,13,18,0.85);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  padding: 10px 14px;
+  z-index: 10;
+  font-size: 11px;
+}
+.arch-legend-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+.arch-legend-item {
+  display: flex;
+  align-items: center;
+  margin-bottom: 3px;
+  color: var(--text-muted);
+}
+.arch-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 7px;
+  flex-shrink: 0;
+}
+
+.arch-stats {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  z-index: 10;
+  background: rgba(12,13,18,0.7);
+  backdrop-filter: blur(12px);
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-default);
+}
+
+.arch-tooltip {
+  position: absolute;
+  display: none;
+  background: rgba(12,13,18,0.92);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 12px;
+  line-height: 1.5;
+  max-width: 300px;
+  pointer-events: none;
+  z-index: 20;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+}
+
+/* Architecture loading overlay */
+.arch-loading {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 9, 13, 0.8);
+  z-index: 15;
+  gap: 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+/* Architecture graph cursor */
+#arch-diagram { cursor: grab; }
+#arch-diagram:active { cursor: grabbing; }
+
+/* Architecture search input */
+.arch-search-input {
+  width: 160px;
+  min-width: 120px;
+  flex-shrink: 0;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.arch-search-input:focus {
+  border-color: var(--accent);
+}
+.arch-search-input::placeholder {
+  color: var(--text-muted);
+}
+
 /* ═══ Diff Styles ═══ */
 
 .diff-summary {
