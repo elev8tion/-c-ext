@@ -66,7 +66,7 @@ The web UI includes 8 tabs:
 |-----|-------------|
 | **Scan** | Scan projects, browse/filter/preview items, extract to zip |
 | **Catalog** | Card grid of all components with parameters, language badges, code previews |
-| **Architecture** | Mermaid.js diagram of module dependencies, clickable module list |
+| **Architecture** | Interactive Cytoscape.js dependency graph with node sizing, edge weighting, search, module zoom |
 | **Health** | Long functions, code duplication detection, coupling scores, overall health score |
 | **Docs** | Auto-generated documentation from AST data, Watch Mode for live updates, markdown export |
 | **Compare** | Semantic diff between two codebases — added/removed/modified items |
