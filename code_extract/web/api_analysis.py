@@ -177,3 +177,59 @@ async def health(req: ScanIdRequest):
     result = analyze_health(blocks, graph)
     state.store_analysis(req.scan_id, "health", result)
     return result
+
+
+@router.get("/item-stats/{scan_id}")
+async def item_stats(scan_id: str):
+    """Per-item stats: deps count, size in bytes, line count, health score."""
+    cached = state.get_analysis(scan_id, "item_stats")
+    if cached:
+        return {"stats": cached}
+
+    blocks = state.get_blocks_for_scan(scan_id)
+    if not blocks:
+        raise HTTPException(400, "No extracted blocks available")
+
+    # Try to get graph for dep counts (non-fatal if missing)
+    graph = None
+    try:
+        graph = await asyncio.to_thread(_get_or_build_graph, scan_id)
+    except Exception:
+        pass
+
+    def _compute():
+        stats = {}
+        for item_id, block in blocks.items():
+            code = getattr(block, "code", "") or ""
+            line_count = len(code.splitlines()) if code else 0
+            size_bytes = len(code.encode("utf-8")) if code else 0
+
+            # Dependency count from graph
+            deps = 0
+            if graph:
+                node = graph.nodes.get(item_id)
+                if node:
+                    deps = len(getattr(node, "edges_out", []) if hasattr(node, "edges_out") else [])
+                # Fallback: count edges where source matches
+                if deps == 0:
+                    deps = sum(1 for e in graph.edges if getattr(e, "source", None) == item_id)
+
+            # Simple health heuristic per item
+            health_score = 100
+            if line_count > 100:
+                health_score -= min(30, (line_count - 100) // 5)
+            if deps > 10:
+                health_score -= min(20, (deps - 10) * 2)
+            health_score = max(0, health_score)
+
+            stats[item_id] = {
+                "deps": deps,
+                "size_bytes": size_bytes,
+                "line_count": line_count,
+                "health_score": health_score,
+            }
+        return stats
+
+    result = await asyncio.to_thread(_compute)
+    state.store_analysis(scan_id, "item_stats", result)
+    return {"stats": result}

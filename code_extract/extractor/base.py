@@ -13,10 +13,17 @@ class BaseExtractor(abc.ABC):
     """Base class for language-specific extractors."""
 
     @abc.abstractmethod
-    def extract(self, item: ScannedItem) -> ExtractedBlock:
-        """Extract a code block for the given scanned item."""
+    def extract(self, item: ScannedItem, *, source: str | None = None) -> ExtractedBlock:
+        """Extract a code block for the given scanned item.
 
-    def _read_source(self, path: Path) -> str:
+        Args:
+            item: The scanned item to extract.
+            source: Pre-read file source to avoid redundant disk reads.
+        """
+
+    def _read_source(self, path: Path, source: str | None = None) -> str:
+        if source is not None:
+            return source
         return path.read_text(encoding="utf-8", errors="replace")
 
     def _extract_brace_block(self, source: str, start_offset: int) -> str:

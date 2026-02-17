@@ -9,8 +9,8 @@
     tailwind.config = {
       darkMode: 'class',
       theme: { extend: { colors: {
-        surface: { DEFAULT: '#0f1117', 100: '#161822', 200: '#1e2030' },
-        accent: '#6366f1',
+        canvas: { DEFAULT: '#08090d', raised: '#0c0d12' },
+        accent: '#00f0ff',
       }}}
     }
   </script>
@@ -19,95 +19,123 @@
   <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
   <link rel="stylesheet" href="/styles.css">
 </head>
-<body class="bg-surface text-gray-200 h-screen flex flex-col overflow-hidden">
+<body class="bg-canvas text-[rgba(255,255,255,0.92)] h-screen flex flex-col overflow-hidden">
 
-  <!-- Header -->
-  <header class="flex items-center justify-between px-6 py-3 border-b border-gray-800 shrink-0">
-    <div class="flex items-center gap-3">
-      <span class="text-lg font-bold text-white tracking-tight">code-extract</span>
-      <span class="text-xs px-2 py-0.5 rounded bg-accent/20 text-indigo-300">v0.3</span>
-    </div>
-    <div class="flex items-center gap-4 text-xs text-gray-500">
-      <span id="status-text">Ready</span>
-    </div>
-  </header>
-
-  <!-- Main layout -->
+  <!-- Main 3-column layout -->
   <div class="flex flex-1 overflow-hidden">
 
-    <!-- Sidebar -->
-    <aside class="w-64 border-r border-gray-800 flex flex-col shrink-0">
-      <div class="p-4 space-y-3">
-        <label class="text-xs font-medium text-gray-400 uppercase tracking-wider">Project Path</label>
+    <!-- ═══ Left Sidebar — Navigation ═══ -->
+    <aside class="w-64 border-r flex flex-col shrink-0" style="border-color: var(--border-default); background: var(--canvas-raised)">
+
+      <!-- Brand -->
+      <div class="px-4 pt-4 pb-2 flex items-center gap-2">
+        <span class="text-base font-bold tracking-tight" style="color: var(--text-primary)">code-extract</span>
+        <span class="text-[0.625rem] px-1.5 py-0.5 rounded" style="background: var(--accent-dimmed); color: var(--accent)">v0.3</span>
+      </div>
+
+      <!-- Path input + Run Scan -->
+      <div class="px-4 py-2 space-y-2">
         <div class="relative">
           <input id="path-input" type="text" placeholder="~/my-project"
-            class="w-full px-3 py-2 bg-surface-200 border border-gray-700 rounded-lg text-sm focus:outline-none focus:border-accent"
-            autocomplete="off">
+            class="glass-input w-full px-3 py-2 text-sm" autocomplete="off">
           <div id="autocomplete-dropdown" class="autocomplete-dropdown hidden"></div>
         </div>
         <button id="scan-btn" onclick="app.scan()"
-          class="w-full py-2 bg-accent hover:bg-indigo-500 text-white text-sm font-medium rounded-lg transition">
-          Scan
+          class="neon-btn-outlined neon-btn-cyan w-full justify-center py-2 text-sm font-medium">
+          Run Scan
         </button>
       </div>
 
-      <!-- Filters (for Scan tab) -->
-      <div id="sidebar-filters" class="px-4 pb-3 space-y-2">
-        <label class="text-xs font-medium text-gray-400 uppercase tracking-wider">Filters</label>
-        <select id="filter-language" onchange="app.applyFilters()"
-          class="w-full px-2 py-1.5 bg-surface-200 border border-gray-700 rounded text-xs">
-          <option value="">All Languages</option>
-        </select>
-        <select id="filter-type" onchange="app.applyFilters()"
-          class="w-full px-2 py-1.5 bg-surface-200 border border-gray-700 rounded text-xs">
-          <option value="">All Types</option>
-        </select>
-        <input id="filter-search" type="text" placeholder="Search names..." oninput="app.applyFilters()"
-          class="w-full px-2 py-1.5 bg-surface-200 border border-gray-700 rounded text-xs">
-      </div>
+      <!-- Nav sections -->
+      <nav class="flex-1 overflow-y-auto px-2 py-1 space-y-0.5">
+        <div class="nav-section-label">Analysis</div>
+        <div class="nav-item active" data-tab="scan" onclick="app.switchTab('scan')">
+          <span class="nav-icon">&#x2302;</span> Scan Results
+        </div>
+        <div class="nav-item" data-tab="catalog" onclick="app.switchTab('catalog')">
+          <span class="nav-icon">&#x25A6;</span> Catalog
+        </div>
+        <div class="nav-item" data-tab="health" onclick="app.switchTab('health')">
+          <span class="nav-icon">&#x2665;</span> Health
+        </div>
+        <div class="nav-item" data-tab="architecture" onclick="app.switchTab('architecture')">
+          <span class="nav-icon">&#x2B21;</span> Architecture
+        </div>
+        <div class="nav-item" data-tab="deadcode" onclick="app.switchTab('deadcode')">
+          <span class="nav-icon">&#x2717;</span> Dead Code
+        </div>
+
+        <div class="nav-section-label mt-2">Tools</div>
+        <div class="nav-item" data-tab="docs" onclick="app.switchTab('docs')">
+          <span class="nav-icon">&#x2630;</span> Docs
+        </div>
+        <div class="nav-item" data-tab="compare" onclick="app.switchTab('compare')">
+          <span class="nav-icon">&#x2194;</span> Compare
+        </div>
+        <div class="nav-item" data-tab="tour" onclick="app.switchTab('tour')">
+          <span class="nav-icon">&#x279C;</span> Tour
+        </div>
+
+        <!-- Filters (Scan tab only) -->
+        <div id="sidebar-filters" class="mt-3 space-y-2 px-1">
+          <div class="nav-section-label px-0">Filters</div>
+          <select id="filter-language" onchange="app.applyFilters()"
+            class="glass-input w-full px-2 py-1.5 text-xs">
+            <option value="">All Languages</option>
+          </select>
+          <select id="filter-type" onchange="app.applyFilters()"
+            class="glass-input w-full px-2 py-1.5 text-xs">
+            <option value="">All Types</option>
+          </select>
+          <input id="filter-search" type="text" placeholder="Search names..." oninput="app.applyFilters()"
+            class="glass-input w-full px-2 py-1.5 text-xs">
+        </div>
+      </nav>
 
       <!-- Recent Scans -->
-      <div class="flex-1 overflow-y-auto px-4 pb-4">
-        <label class="text-xs font-medium text-gray-400 uppercase tracking-wider">Recent Scans</label>
-        <div id="recent-scans" class="mt-2 space-y-1 text-xs"></div>
+      <div class="px-4 pb-2 overflow-y-auto max-h-32">
+        <div class="nav-section-label px-0">Recent Scans</div>
+        <div id="recent-scans" class="mt-1 space-y-0.5 text-xs"></div>
       </div>
+
     </aside>
 
-    <!-- Main content -->
+    <!-- ═══ Main Content ═══ -->
     <main class="flex-1 flex flex-col overflow-hidden">
-
-      <!-- Tab bar -->
-      <div class="tab-bar flex items-center gap-1 px-4 py-1.5 border-b border-gray-800 shrink-0 overflow-x-auto">
-        <button class="tab-btn active" data-tab="scan" onclick="app.switchTab('scan')">Scan</button>
-        <button class="tab-btn" data-tab="catalog" onclick="app.switchTab('catalog')">Catalog</button>
-        <button class="tab-btn" data-tab="architecture" onclick="app.switchTab('architecture')">Architecture</button>
-        <button class="tab-btn" data-tab="health" onclick="app.switchTab('health')">Health</button>
-        <button class="tab-btn" data-tab="docs" onclick="app.switchTab('docs')">Docs</button>
-        <button class="tab-btn" data-tab="compare" onclick="app.switchTab('compare')">Compare</button>
-        <button class="tab-btn" data-tab="deadcode" onclick="app.switchTab('deadcode')">Dead Code</button>
-        <button class="tab-btn" data-tab="tour" onclick="app.switchTab('tour')">Tour</button>
-      </div>
 
       <!-- ═══ Tab: Scan ═══ -->
       <div id="tab-scan" class="tab-panel active flex flex-col flex-1 overflow-hidden">
-        <div class="flex items-center gap-3 px-4 py-2 border-b border-gray-800 text-xs shrink-0">
-          <label class="flex items-center gap-1.5 text-gray-400">
-            <input type="checkbox" id="select-all" onchange="app.toggleAll(this.checked)"
-              class="rounded bg-surface-200 border-gray-600">
+        <div class="info-bar shrink-0">
+          <span id="item-count" style="color: var(--text-secondary)">0 items</span>
+          <span class="mx-2" style="color: var(--text-muted)">&bull;</span>
+          <span id="selected-count-info" style="color: var(--text-muted)">0 selected</span>
+          <div class="flex-1"></div>
+          <label class="flex items-center gap-1.5" style="color: var(--text-muted)">
+            <input type="checkbox" id="select-all" onchange="app.toggleAll(this.checked)">
             Select All
           </label>
-          <span id="item-count" class="text-gray-500">0 items</span>
-          <div class="flex-1"></div>
-          <span id="scan-dir" class="text-gray-600 truncate max-w-md"></span>
+          <span id="scan-dir" class="ml-3 truncate max-w-xs" style="color: var(--text-muted)"></span>
         </div>
         <div id="results" class="flex-1 overflow-y-auto">
-          <div id="empty-state" class="flex items-center justify-center h-full text-gray-600">
+          <div id="empty-state" class="flex items-center justify-center h-full" style="color: var(--text-muted)">
             <div class="text-center space-y-2">
-              <div class="text-4xl">{ }</div>
-              <p>Enter a project path and click Scan</p>
+              <div class="text-4xl opacity-30">{ }</div>
+              <p>Enter a project path and click Run Scan</p>
             </div>
           </div>
           <table id="results-table" class="w-full text-sm hidden">
+            <thead>
+              <tr style="border-bottom: 1px solid var(--border-default)">
+                <th class="w-8"></th>
+                <th class="text-left px-2 py-1.5 text-[0.625rem] font-semibold uppercase tracking-wider" style="color: var(--text-muted)">Type</th>
+                <th class="text-left px-2 py-1.5 text-[0.625rem] font-semibold uppercase tracking-wider" style="color: var(--text-muted)">Name</th>
+                <th class="text-left px-2 py-1.5 text-[0.625rem] font-semibold uppercase tracking-wider" style="color: var(--text-muted)">Lang</th>
+                <th class="text-left px-2 py-1.5 text-[0.625rem] font-semibold uppercase tracking-wider" style="color: var(--text-muted)">Deps</th>
+                <th class="text-left px-2 py-1.5 text-[0.625rem] font-semibold uppercase tracking-wider" style="color: var(--text-muted)">Size</th>
+                <th class="text-left px-2 py-1.5 text-[0.625rem] font-semibold uppercase tracking-wider" style="color: var(--text-muted)">Health</th>
+                <th class="text-right pr-4 py-1.5 text-[0.625rem] font-semibold uppercase tracking-wider" style="color: var(--text-muted)">Lines</th>
+              </tr>
+            </thead>
             <tbody id="results-body"></tbody>
           </table>
         </div>
@@ -116,18 +144,18 @@
       <!-- ═══ Tab: Catalog ═══ -->
       <div id="tab-catalog" class="tab-panel flex-1 overflow-y-auto p-6 hidden">
         <div id="catalog-empty" class="tab-empty-state">
-          <p class="text-gray-500">Scan a project first to build the component catalog</p>
+          <p>Scan a project first to build the component catalog</p>
         </div>
         <div id="catalog-content" class="hidden">
           <div class="flex items-center gap-4 mb-4">
-            <h2 class="text-lg font-semibold text-white">Component Catalog</h2>
+            <h2 class="text-lg font-semibold" style="color: var(--text-primary)">Component Catalog</h2>
             <input id="catalog-search" type="text" placeholder="Search components..."
-              class="px-3 py-1.5 bg-surface-200 border border-gray-700 rounded text-xs w-64" oninput="app.filterCatalog()">
-            <select id="catalog-lang-filter" class="px-2 py-1.5 bg-surface-200 border border-gray-700 rounded text-xs" onchange="app.filterCatalog()">
+              class="glass-input px-3 py-1.5 text-xs w-64" oninput="app.filterCatalog()">
+            <select id="catalog-lang-filter" class="glass-input px-2 py-1.5 text-xs" onchange="app.filterCatalog()">
               <option value="">All Languages</option>
             </select>
             <div class="flex-1"></div>
-            <button onclick="app.exportCatalogHTML()" class="px-3 py-1.5 bg-surface-200 border border-gray-700 rounded text-xs hover:bg-surface-100">Export HTML</button>
+            <button onclick="app.exportCatalogHTML()" class="neon-btn-outlined neon-btn-cyan text-xs py-1">Export HTML</button>
           </div>
           <div id="catalog-grid" class="card-grid"></div>
         </div>
@@ -136,18 +164,18 @@
       <!-- ═══ Tab: Architecture ═══ -->
       <div id="tab-architecture" class="tab-panel flex-1 overflow-hidden hidden">
         <div id="arch-empty" class="tab-empty-state">
-          <p class="text-gray-500">Scan a project first to view architecture</p>
+          <p>Scan a project first to view architecture</p>
         </div>
         <div id="arch-content" class="hidden flex h-full">
-          <div class="w-[60%] overflow-auto p-4 border-r border-gray-800">
+          <div class="w-[60%] overflow-auto p-4" style="border-right: 1px solid var(--border-default)">
             <div class="flex items-center justify-between mb-3">
-              <h2 class="text-lg font-semibold text-white">Architecture Diagram</h2>
-              <button onclick="app.exportArchSVG()" class="px-3 py-1.5 bg-surface-200 border border-gray-700 rounded text-xs hover:bg-surface-100">Export SVG</button>
+              <h2 class="text-lg font-semibold" style="color: var(--text-primary)">Architecture Diagram</h2>
+              <button onclick="app.exportArchSVG()" class="neon-btn-outlined neon-btn-cyan text-xs py-1">Export SVG</button>
             </div>
             <div id="arch-diagram" class="mermaid-container"></div>
           </div>
           <div class="w-[40%] overflow-y-auto p-4">
-            <h3 class="text-sm font-semibold text-gray-300 mb-3">Modules</h3>
+            <h3 class="text-sm font-semibold mb-3" style="color: var(--text-secondary)">Modules</h3>
             <div id="arch-modules"></div>
           </div>
         </div>
@@ -156,24 +184,24 @@
       <!-- ═══ Tab: Health ═══ -->
       <div id="tab-health" class="tab-panel flex-1 overflow-y-auto p-6 hidden">
         <div id="health-empty" class="tab-empty-state">
-          <p class="text-gray-500">Scan a project first to view health metrics</p>
+          <p>Scan a project first to view health metrics</p>
         </div>
         <div id="health-content" class="hidden">
           <div class="flex items-center gap-4 mb-6">
-            <h2 class="text-lg font-semibold text-white">Refactoring Radar</h2>
+            <h2 class="text-lg font-semibold" style="color: var(--text-primary)">Refactoring Radar</h2>
             <div id="health-score" class="metric-card-inline"></div>
           </div>
           <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div>
-              <h3 class="text-sm font-semibold text-gray-300 mb-3">Long Functions</h3>
+              <h3 class="text-sm font-semibold mb-3" style="color: var(--text-secondary)">Long Functions</h3>
               <div id="health-long-fns" class="space-y-2"></div>
             </div>
             <div>
-              <h3 class="text-sm font-semibold text-gray-300 mb-3">Duplications</h3>
+              <h3 class="text-sm font-semibold mb-3" style="color: var(--text-secondary)">Duplications</h3>
               <div id="health-duplicates" class="space-y-2"></div>
             </div>
             <div>
-              <h3 class="text-sm font-semibold text-gray-300 mb-3">Coupling</h3>
+              <h3 class="text-sm font-semibold mb-3" style="color: var(--text-secondary)">Coupling</h3>
               <div id="health-coupling" class="space-y-2"></div>
             </div>
           </div>
@@ -183,21 +211,20 @@
       <!-- ═══ Tab: Docs ═══ -->
       <div id="tab-docs" class="tab-panel flex-1 overflow-y-auto p-6 hidden">
         <div id="docs-empty" class="tab-empty-state">
-          <p class="text-gray-500">Scan a project first to generate documentation</p>
+          <p>Scan a project first to generate documentation</p>
         </div>
         <div id="docs-content" class="hidden">
           <div class="flex items-center gap-4 mb-4">
-            <h2 class="text-lg font-semibold text-white">Living Documentation</h2>
-            <label class="flex items-center gap-2 text-xs text-gray-400">
-              <input type="checkbox" id="docs-watch-toggle" onchange="app.toggleDocsWatch(this.checked)"
-                class="rounded bg-surface-200 border-gray-600">
+            <h2 class="text-lg font-semibold" style="color: var(--text-primary)">Living Documentation</h2>
+            <label class="flex items-center gap-2 text-xs" style="color: var(--text-secondary)">
+              <input type="checkbox" id="docs-watch-toggle" onchange="app.toggleDocsWatch(this.checked)">
               Watch Mode
             </label>
-            <span id="docs-live-indicator" class="hidden text-xs text-green-400 flex items-center gap-1">
-              <span class="w-2 h-2 rounded-full bg-green-400 animate-pulse inline-block"></span> Live
+            <span id="docs-live-indicator" class="hidden text-xs flex items-center gap-1" style="color: var(--success)">
+              <span class="w-2 h-2 rounded-full inline-block animate-pulse" style="background: var(--success)"></span> Live
             </span>
             <div class="flex-1"></div>
-            <button onclick="app.exportDocsMarkdown()" class="px-3 py-1.5 bg-surface-200 border border-gray-700 rounded text-xs hover:bg-surface-100">Export Markdown</button>
+            <button onclick="app.exportDocsMarkdown()" class="neon-btn-outlined neon-btn-cyan text-xs py-1">Export Markdown</button>
           </div>
           <div id="docs-body"></div>
         </div>
@@ -206,20 +233,20 @@
       <!-- ═══ Tab: Compare ═══ -->
       <div id="tab-compare" class="tab-panel flex-1 overflow-y-auto p-6 hidden">
         <div class="flex items-center gap-4 mb-4">
-          <h2 class="text-lg font-semibold text-white">Semantic Diff</h2>
+          <h2 class="text-lg font-semibold" style="color: var(--text-primary)">Semantic Diff</h2>
         </div>
         <div class="flex gap-4 mb-4">
           <div class="flex-1">
-            <label class="text-xs text-gray-400 mb-1 block">Source Path (Before)</label>
+            <label class="text-xs mb-1 block" style="color: var(--text-secondary)">Source Path (Before)</label>
             <input id="diff-path-a" type="text" placeholder="~/project-v1"
-              class="w-full px-3 py-2 bg-surface-200 border border-gray-700 rounded-lg text-sm">
+              class="glass-input w-full px-3 py-2 text-sm">
           </div>
           <div class="flex-1">
-            <label class="text-xs text-gray-400 mb-1 block">Target Path (After)</label>
+            <label class="text-xs mb-1 block" style="color: var(--text-secondary)">Target Path (After)</label>
             <input id="diff-path-b" type="text" placeholder="~/project-v2"
-              class="w-full px-3 py-2 bg-surface-200 border border-gray-700 rounded-lg text-sm">
+              class="glass-input w-full px-3 py-2 text-sm">
           </div>
-          <button onclick="app.runDiff()" class="self-end px-4 py-2 bg-accent hover:bg-indigo-500 text-white text-sm rounded-lg">Compare</button>
+          <button onclick="app.runDiff()" class="neon-btn-outlined neon-btn-cyan self-end py-2 px-4 text-sm">Compare</button>
         </div>
         <div id="diff-summary" class="hidden mb-4"></div>
         <div id="diff-results"></div>
@@ -228,21 +255,21 @@
       <!-- ═══ Tab: Dead Code ═══ -->
       <div id="tab-deadcode" class="tab-panel flex-1 overflow-y-auto p-6 hidden">
         <div id="deadcode-empty" class="tab-empty-state">
-          <p class="text-gray-500">Scan a project first to detect dead code</p>
+          <p>Scan a project first to detect dead code</p>
         </div>
         <div id="deadcode-content" class="hidden">
           <div class="flex items-center gap-4 mb-4">
-            <h2 class="text-lg font-semibold text-white">Dead Code Detector</h2>
-            <span id="deadcode-count" class="text-xs text-gray-500"></span>
+            <h2 class="text-lg font-semibold" style="color: var(--text-primary)">Dead Code Detector</h2>
+            <span id="deadcode-count" class="text-xs" style="color: var(--text-muted)"></span>
           </div>
           <table class="w-full text-sm">
             <thead>
-              <tr class="text-xs text-gray-500 border-b border-gray-800">
-                <th class="text-left px-3 py-2">Name</th>
-                <th class="text-left px-3 py-2">Type</th>
-                <th class="text-left px-3 py-2">File</th>
-                <th class="text-left px-3 py-2">Confidence</th>
-                <th class="text-left px-3 py-2">Reason</th>
+              <tr style="border-bottom: 1px solid var(--border-default)">
+                <th class="text-left px-3 py-2 text-[0.625rem] font-semibold uppercase" style="color: var(--text-muted)">Name</th>
+                <th class="text-left px-3 py-2 text-[0.625rem] font-semibold uppercase" style="color: var(--text-muted)">Type</th>
+                <th class="text-left px-3 py-2 text-[0.625rem] font-semibold uppercase" style="color: var(--text-muted)">File</th>
+                <th class="text-left px-3 py-2 text-[0.625rem] font-semibold uppercase" style="color: var(--text-muted)">Confidence</th>
+                <th class="text-left px-3 py-2 text-[0.625rem] font-semibold uppercase" style="color: var(--text-muted)">Reason</th>
               </tr>
             </thead>
             <tbody id="deadcode-body"></tbody>
@@ -253,20 +280,20 @@
       <!-- ═══ Tab: Tour ═══ -->
       <div id="tab-tour" class="tab-panel flex-1 overflow-hidden hidden">
         <div id="tour-empty" class="tab-empty-state">
-          <p class="text-gray-500">Scan a project first to generate a codebase tour</p>
+          <p>Scan a project first to generate a codebase tour</p>
         </div>
         <div id="tour-content" class="hidden flex h-full">
-          <div class="w-48 border-r border-gray-800 overflow-y-auto p-3">
-            <h3 class="text-xs font-semibold text-gray-400 uppercase mb-2">Steps</h3>
+          <div class="w-48 overflow-y-auto p-3" style="border-right: 1px solid var(--border-default)">
+            <h3 class="text-xs font-semibold uppercase mb-2" style="color: var(--text-muted)">Steps</h3>
             <div id="tour-step-list" class="space-y-1"></div>
           </div>
           <div class="flex-1 overflow-y-auto p-6">
             <div id="tour-step-content"></div>
             <div class="flex items-center gap-3 mt-6">
-              <button id="tour-prev" onclick="app.tourPrev()" class="px-3 py-1.5 bg-surface-200 border border-gray-700 rounded text-xs hover:bg-surface-100" disabled>Previous</button>
-              <button id="tour-next" onclick="app.tourNext()" class="px-3 py-1.5 bg-accent hover:bg-indigo-500 text-white rounded text-xs">Next</button>
+              <button id="tour-prev" onclick="app.tourPrev()" class="neon-btn-outlined neon-btn-cyan text-xs py-1" disabled>Previous</button>
+              <button id="tour-next" onclick="app.tourNext()" class="neon-btn-outlined neon-btn-cyan text-xs py-1">Next</button>
               <div class="flex-1"></div>
-              <button onclick="app.exportTourMarkdown()" class="px-3 py-1.5 bg-surface-200 border border-gray-700 rounded text-xs hover:bg-surface-100">Export Markdown</button>
+              <button onclick="app.exportTourMarkdown()" class="neon-btn-outlined neon-btn-cyan text-xs py-1">Export Markdown</button>
             </div>
           </div>
         </div>
@@ -274,43 +301,66 @@
 
     </main>
 
-    <!-- Preview panel -->
-    <aside id="preview-panel" class="w-[420px] border-l border-gray-800 flex-col hidden shrink-0">
-      <div class="flex items-center justify-between px-4 py-2 border-b border-gray-800">
+    <!-- ═══ Right Detail Panel ═══ -->
+    <aside id="preview-panel" class="w-[340px] flex-col hidden shrink-0" style="border-left: 1px solid var(--border-default); background: var(--canvas-raised)">
+      <div class="flex items-center justify-between px-4 py-2" style="border-bottom: 1px solid var(--border-default)">
         <div>
-          <span id="preview-name" class="font-medium text-sm"></span>
+          <span id="preview-name" class="font-medium text-sm" style="color: var(--text-primary)"></span>
           <span id="preview-badge" class="ml-2 text-xs px-1.5 py-0.5 rounded"></span>
         </div>
-        <button onclick="app.closePreview()" class="text-gray-500 hover:text-white text-lg">&times;</button>
+        <button onclick="app.closePreview()" class="text-lg hover:opacity-100 transition-opacity" style="color: var(--text-muted)">&times;</button>
       </div>
+
+      <!-- Code preview -->
       <div class="flex-1 overflow-auto p-4">
         <pre><code id="preview-code" class="text-xs"></code></pre>
+      </div>
+
+      <!-- Stats line -->
+      <div id="preview-stats" class="px-4 py-2 text-[0.6875rem] hidden" style="color: var(--text-muted); border-top: 1px solid var(--border-default)"></div>
+
+      <!-- Health card -->
+      <div id="detail-health-card" class="detail-card mx-3 hidden">
+        <div class="detail-card-title">Health</div>
+        <div id="detail-health-content"></div>
+      </div>
+
+      <!-- Language Breakdown card -->
+      <div id="detail-lang-card" class="detail-card mx-3 mb-3 hidden">
+        <div class="detail-card-title">Language Breakdown</div>
+        <div id="detail-lang-content"></div>
       </div>
     </aside>
   </div>
 
-  <!-- Action bar -->
-  <footer class="flex items-center gap-4 px-6 py-3 border-t border-gray-800 shrink-0">
-    <span id="selected-count" class="text-sm text-gray-400">0 selected</span>
-    <button id="extract-btn" onclick="app.extract()" disabled
-      class="px-4 py-1.5 bg-green-600 hover:bg-green-500 disabled:bg-gray-700 disabled:text-gray-500 text-white text-sm rounded-lg transition">
-      Extract
-    </button>
-    <button id="smart-extract-btn" onclick="app.smartExtract()" disabled
-      class="px-4 py-1.5 bg-purple-600 hover:bg-purple-500 disabled:bg-gray-700 disabled:text-gray-500 text-white text-sm rounded-lg transition">
-      Extract with Deps
-    </button>
-    <button id="package-btn" onclick="app.createPackage()" disabled
-      class="px-4 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:bg-gray-700 disabled:text-gray-500 text-white text-sm rounded-lg transition">
-      Create Package
-    </button>
-    <div class="flex-1">
-      <div id="progress-bar" class="h-1.5 bg-gray-800 rounded-full overflow-hidden hidden">
-        <div id="progress-fill" class="h-full bg-accent transition-all duration-300" style="width:0%"></div>
-      </div>
-      <span id="progress-text" class="text-xs text-gray-500 hidden"></span>
+  <!-- ═══ Footer ═══ -->
+  <footer class="flex items-center gap-4 px-4 py-2 shrink-0" style="border-top: 1px solid var(--border-default)">
+    <div class="flex items-center gap-2 text-xs" style="color: var(--text-muted)">
+      <span class="status-dot connected"></span>
+      <span id="footer-status">Ready</span>
     </div>
-    <a id="download-link" download class="hidden px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg transition cursor-pointer">
+    <div class="flex-1 px-4">
+      <div id="progress-bar" class="h-1 rounded-full overflow-hidden hidden" style="background: var(--border-default)">
+        <div id="progress-fill" class="h-full transition-all duration-300" style="width:0%; background: var(--accent)"></div>
+      </div>
+      <span id="progress-text" class="text-[0.625rem] hidden" style="color: var(--text-muted)"></span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span id="selected-count" class="text-xs mr-1" style="color: var(--text-secondary)">0 selected</span>
+      <button id="extract-btn" onclick="app.extract()" disabled
+        class="neon-btn-outlined neon-btn-cyan text-xs">
+        Extract
+      </button>
+      <button id="smart-extract-btn" onclick="app.smartExtract()" disabled
+        class="neon-btn-outlined neon-btn-teal text-xs">
+        Extract with Deps
+      </button>
+      <button id="package-btn" onclick="app.createPackage()" disabled
+        class="neon-btn-filled neon-btn-green text-xs">
+        Create Package
+      </button>
+    </div>
+    <a id="download-link" download class="hidden neon-btn-outlined neon-btn-cyan text-xs cursor-pointer">
       Download ZIP
     </a>
   </footer>

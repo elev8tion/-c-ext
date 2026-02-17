@@ -36,10 +36,17 @@ class TreeSitterExtractor:
 
     def __init__(self):
         self._parser_cache: dict[str, object] = {}
+        self._tree_cache: dict[str, tuple[str, bytes, object]] = {}  # path -> (source, bytes, tree)
 
-    def extract(self, item: ScannedItem) -> ExtractedBlock:
-        source = item.file_path.read_text(encoding="utf-8", errors="replace")
-        source_bytes = item.file_path.read_bytes()
+    def extract(self, item: ScannedItem, *, source: str | None = None) -> ExtractedBlock:
+        file_key = str(item.file_path)
+        if file_key in self._tree_cache:
+            source, source_bytes, cached_tree = self._tree_cache[file_key]
+        else:
+            if source is None:
+                source = item.file_path.read_text(encoding="utf-8", errors="replace")
+            source_bytes = source.encode("utf-8")
+            cached_tree = None
 
         ext = item.file_path.suffix
         entry = EXT_TO_LANGUAGE.get(ext)
@@ -47,8 +54,12 @@ class TreeSitterExtractor:
             return self._fallback_extract(item, source)
 
         _, grammar_name = entry
-        parser = self._get_parser(grammar_name)
-        tree = parser.parse(source_bytes)
+        if cached_tree is not None:
+            tree = cached_tree
+        else:
+            parser = self._get_parser(grammar_name)
+            tree = parser.parse(source_bytes)
+            self._tree_cache[file_key] = (source, source_bytes, tree)
 
         # Find the node at the item's line
         target_line = item.line_number - 1  # tree-sitter is 0-indexed
@@ -80,6 +91,10 @@ class TreeSitterExtractor:
             decorators=decorators.splitlines() if isinstance(decorators, str) and decorators else [],
             type_references=type_refs,
         )
+
+    def clear_cache(self):
+        """Clear tree cache between scans to free memory."""
+        self._tree_cache.clear()
 
     def _get_parser(self, grammar_name: str):
         if grammar_name not in self._parser_cache:

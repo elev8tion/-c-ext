@@ -12,8 +12,8 @@ from code_extract.extractor.base import BaseExtractor
 
 class PythonExtractor(BaseExtractor):
 
-    def extract(self, item: ScannedItem) -> ExtractedBlock:
-        source = self._read_source(item.file_path)
+    def extract(self, item: ScannedItem, *, source: str | None = None) -> ExtractedBlock:
+        source = self._read_source(item.file_path, source)
         lines = source.splitlines(keepends=True)
         tree = ast.parse(source, filename=str(item.file_path))
 

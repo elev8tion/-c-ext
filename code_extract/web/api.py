@@ -48,7 +48,7 @@ def _validate_path(p: str) -> Path:
 
 def _background_extract_and_analyze(scan_id: str, items: list) -> None:
     """Extract all items, then pre-build all analyses in background."""
-    from code_extract.extractor import extract_item
+    from code_extract.extractor import extract_item, clear_extractor_caches
 
     scan = state.scans.get(scan_id)
     if not scan:
@@ -64,19 +64,27 @@ def _background_extract_and_analyze(scan_id: str, items: list) -> None:
         by_file.setdefault(str(item.file_path), []).append(item)
 
     blocks: dict = {}
-    for file_items in by_file.values():
+    for file_path, file_items in by_file.items():
+        # Read file once, pass to all items in that file
+        try:
+            source = Path(file_path).read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            source = None
+
         for item in file_items:
             try:
-                block = extract_item(item)
+                block = extract_item(item, source=source)
                 key = f"{item.file_path}:{item.line_number}"
                 blocks[key] = block
             except Exception:
                 pass
             scan.blocks_done = len(blocks)
 
+    # Free tree-sitter cache memory
+    clear_extractor_caches()
     state.store_blocks(scan_id, blocks)
 
-    # ── Phase 2: Pre-build all analyses ──
+    # ── Phase 2: Pre-build all analyses (parallel where possible) ──
     scan.status = "analyzing"
 
     try:
@@ -88,22 +96,27 @@ def _background_extract_and_analyze(scan_id: str, items: list) -> None:
     except Exception:
         pass
 
-    # These all depend on graph/blocks — run them and cache
-    analysis_jobs = [
-        ("catalog", lambda: _build_catalog(scan_id, blocks)),
-        ("architecture", lambda: _build_architecture(scan_id, scan.source_dir)),
-        ("health", lambda: _build_health(scan_id, blocks)),
-        ("deadcode", lambda: _build_deadcode(scan_id)),
-        ("docs", lambda: _build_docs(scan_id, blocks)),
-        ("tour", lambda: _build_tour(scan_id, blocks)),
-    ]
+    # Run analyses concurrently — all depend on blocks/graph which are ready
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    for name, job in analysis_jobs:
-        try:
-            job()
-            scan.analyses_ready.append(name)
-        except Exception:
-            pass
+    analysis_jobs = {
+        "catalog": lambda: _build_catalog(scan_id, blocks),
+        "architecture": lambda: _build_architecture(scan_id, scan.source_dir),
+        "health": lambda: _build_health(scan_id, blocks),
+        "deadcode": lambda: _build_deadcode(scan_id),
+        "docs": lambda: _build_docs(scan_id, blocks),
+        "tour": lambda: _build_tour(scan_id, blocks),
+    }
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {pool.submit(job): name for name, job in analysis_jobs.items()}
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                future.result()
+                scan.analyses_ready.append(name)
+            except Exception:
+                pass
 
     scan.status = "ready"
 

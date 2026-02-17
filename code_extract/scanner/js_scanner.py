@@ -38,8 +38,15 @@ class JsScanner(BaseScanner):
         seen: set[tuple[str, int]] = set()
         lines = source.splitlines()
 
+        # Pre-build newline offset index for O(log n) line lookups
+        import bisect
+        newline_offsets = [i for i, ch in enumerate(source) if ch == "\n"]
+
+        def _line_at(offset: int) -> int:
+            return bisect.bisect_left(newline_offsets, offset) + 1
+
         for m in _CLASS_RE.finditer(source):
-            line_no = source[:m.start()].count("\n") + 1
+            line_no = _line_at(m.start())
             name = m.group(1)
             if (name, line_no) not in seen:
                 seen.add((name, line_no))
@@ -52,7 +59,7 @@ class JsScanner(BaseScanner):
                 ))
 
         for m in _FUNCTION_RE.finditer(source):
-            line_no = source[:m.start()].count("\n") + 1
+            line_no = _line_at(m.start())
             name = m.group(1)
             if (name, line_no) not in seen:
                 seen.add((name, line_no))
@@ -65,7 +72,7 @@ class JsScanner(BaseScanner):
                 ))
 
         for m in _ARROW_CONST_RE.finditer(source):
-            line_no = source[:m.start()].count("\n") + 1
+            line_no = _line_at(m.start())
             name = m.group(1)
             if (name, line_no) not in seen:
                 seen.add((name, line_no))
@@ -80,7 +87,7 @@ class JsScanner(BaseScanner):
 
         # Detect React components (function Xxx that returns JSX)
         for m in _REACT_COMPONENT_RE.finditer(source):
-            line_no = source[:m.start()].count("\n") + 1
+            line_no = _line_at(m.start())
             name = m.group(1)
             if (name, line_no) not in seen:
                 # Check for JSX-like return in nearby lines

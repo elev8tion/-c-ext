@@ -32,8 +32,8 @@ class DependencyGraphBuilder:
                 imports=list(block.imports),
             )
             graph.nodes[item_id] = node
-            graph.forward[item_id] = []
-            graph.reverse[item_id] = []
+            graph.forward[item_id] = set()
+            graph.reverse[item_id] = set()
 
             # Index by simple name and qualified name
             for name in {block.item.name, block.item.qualified_name}:
@@ -75,7 +75,7 @@ class DependencyGraphBuilder:
             return result
 
         # Direct deps
-        result.direct = set(graph.forward.get(root_id, []))
+        result.direct = set(graph.forward.get(root_id, set()))
 
         # BFS for all transitive
         visited = set()
@@ -140,8 +140,9 @@ class DependencyGraphBuilder:
         edge_type: str,
         reference_name: str,
     ) -> None:
-        # Avoid duplicate edges
-        if target_id in graph.forward.get(source_id, []):
+        # O(1) duplicate check with sets
+        fwd = graph.forward.get(source_id)
+        if fwd is not None and target_id in fwd:
             return
         edge = DependencyEdge(
             source_id=source_id,
@@ -150,8 +151,12 @@ class DependencyGraphBuilder:
             reference_name=reference_name,
         )
         graph.edges.append(edge)
-        graph.forward.setdefault(source_id, []).append(target_id)
-        graph.reverse.setdefault(target_id, []).append(source_id)
+        if source_id not in graph.forward:
+            graph.forward[source_id] = set()
+        graph.forward[source_id].add(target_id)
+        if target_id not in graph.reverse:
+            graph.reverse[target_id] = set()
+        graph.reverse[target_id].add(source_id)
 
     @staticmethod
     def _parse_import_names(import_statement: str) -> list[str]:

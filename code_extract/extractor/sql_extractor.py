@@ -11,8 +11,9 @@ from code_extract.models import ExtractedBlock, ScannedItem
 class SqlExtractor:
     """Extracts SQL statements including multi-line bodies and $$ blocks."""
 
-    def extract(self, item: ScannedItem) -> ExtractedBlock:
-        source = item.file_path.read_text(encoding="utf-8", errors="replace")
+    def extract(self, item: ScannedItem, *, source: str | None = None) -> ExtractedBlock:
+        if source is None:
+            source = item.file_path.read_text(encoding="utf-8", errors="replace")
         lines = source.splitlines()
         start_idx = max(0, item.line_number - 1)
 

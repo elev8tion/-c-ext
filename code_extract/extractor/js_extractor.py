@@ -17,8 +17,8 @@ _IMPORT_RE = re.compile(
 
 class JsExtractor(BaseExtractor):
 
-    def extract(self, item: ScannedItem) -> ExtractedBlock:
-        source = self._read_source(item.file_path)
+    def extract(self, item: ScannedItem, *, source: str | None = None) -> ExtractedBlock:
+        source = self._read_source(item.file_path, source)
         lines = source.splitlines(keepends=True)
 
         # Find the start of the declaration

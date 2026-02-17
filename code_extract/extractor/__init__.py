@@ -43,26 +43,37 @@ _TREESITTER_ONLY: set[Language] = {
 }
 
 
-def extract_item(item: ScannedItem) -> ExtractedBlock:
-    """Extract a code block for the given scanned item."""
+def extract_item(item: ScannedItem, *, source: str | None = None) -> ExtractedBlock:
+    """Extract a code block for the given scanned item.
+
+    Args:
+        item: The scanned item to extract.
+        source: Pre-read file source to avoid redundant disk reads.
+    """
     # Python always uses AST extractor
     if item.language in _EXTRACTORS:
-        return _EXTRACTORS[item.language].extract(item)
+        return _EXTRACTORS[item.language].extract(item, source=source)
 
     # SQL has its own extractor
     if item.language == Language.SQL and _sql_extractor is not None:
-        return _sql_extractor.extract(item)
+        return _sql_extractor.extract(item, source=source)
 
     # Tree-sitter languages
     if _ts_extractor is not None and item.language in (_TREESITTER_ONLY | set(_FALLBACK_EXTRACTORS)):
-        return _ts_extractor.extract(item)
+        return _ts_extractor.extract(item, source=source)
 
     # Fallback to regex extractors
     extractor = _FALLBACK_EXTRACTORS.get(item.language)
     if extractor is not None:
-        return extractor.extract(item)
+        return extractor.extract(item, source=source)
 
     raise ValueError(f"No extractor for language: {item.language}")
+
+
+def clear_extractor_caches():
+    """Clear all extractor caches (call between scans)."""
+    if _ts_extractor is not None:
+        _ts_extractor.clear_cache()
 
 
 __all__ = [

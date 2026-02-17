@@ -28,8 +28,8 @@ class DependencyEdge:
 class DependencyGraph:
     nodes: dict[str, DependencyNode] = field(default_factory=dict)
     edges: list[DependencyEdge] = field(default_factory=list)
-    forward: dict[str, list[str]] = field(default_factory=dict)  # source -> [targets]
-    reverse: dict[str, list[str]] = field(default_factory=dict)  # target -> [sources]
+    forward: dict[str, set[str]] = field(default_factory=dict)  # source -> {targets}
+    reverse: dict[str, set[str]] = field(default_factory=dict)  # target -> {sources}
     name_index: dict[str, list[str]] = field(default_factory=dict)  # name -> [item_ids]
 
 

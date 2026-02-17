@@ -1,4 +1,4 @@
-/* code-extract v0.3 web UI — vanilla JS */
+/* code-extract v0.3 web UI — Liquid Glass Neon */
 
 const app = (() => {
   let currentScan = null;
@@ -6,11 +6,14 @@ const app = (() => {
   let filteredItems = [];
   let selectedIds = new Set();
   let activeTab = 'scan';
-  const tabLoaded = {};    // track which tabs have loaded data
+  const tabLoaded = {};
   let catalogData = null;
   let tourData = null;
   let tourStep = 0;
   let docsWs = null;
+  let itemStats = {};       // Phase 5: per-item stats
+  let healthData = null;     // Phase 4: global health
+  let langBreakdown = null;  // Phase 4: language breakdown
 
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => document.querySelectorAll(sel);
@@ -20,39 +23,64 @@ const app = (() => {
     mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' });
   }
 
-  // --- Badge colors by type ---
+  // --- Badge colors by type (inline style objects) ---
   const TYPE_COLORS = {
-    function: 'bg-green-900/60 text-green-300',
-    class: 'bg-yellow-900/60 text-yellow-300',
-    component: 'bg-purple-900/60 text-purple-300',
-    widget: 'bg-purple-900/60 text-purple-300',
-    method: 'bg-blue-900/60 text-blue-300',
-    mixin: 'bg-cyan-900/60 text-cyan-300',
-    struct: 'bg-amber-900/60 text-amber-300',
-    trait: 'bg-rose-900/60 text-rose-300',
-    interface: 'bg-teal-900/60 text-teal-300',
-    enum: 'bg-lime-900/60 text-lime-300',
-    module: 'bg-sky-900/60 text-sky-300',
-    table: 'bg-orange-900/60 text-orange-300',
-    view: 'bg-teal-900/60 text-teal-300',
-    sql_function: 'bg-pink-900/60 text-pink-300',
-    trigger: 'bg-red-900/60 text-red-300',
-    index: 'bg-gray-700/60 text-gray-300',
-    migration: 'bg-violet-900/60 text-violet-300',
-    policy: 'bg-fuchsia-900/60 text-fuchsia-300',
-    provider: 'bg-indigo-900/60 text-indigo-300',
+    function:     { bg: 'rgba(0,255,157,0.12)',  text: '#00ff9d' },
+    class:        { bg: 'rgba(255,184,0,0.12)',  text: '#ffb800' },
+    component:    { bg: 'rgba(167,139,250,0.12)', text: '#a78bfa' },
+    widget:       { bg: 'rgba(167,139,250,0.12)', text: '#a78bfa' },
+    method:       { bg: 'rgba(0,240,255,0.12)',  text: '#00f0ff' },
+    mixin:        { bg: 'rgba(0,240,255,0.08)',  text: '#67e8f9' },
+    struct:       { bg: 'rgba(255,184,0,0.08)',  text: '#fbbf24' },
+    trait:        { bg: 'rgba(255,51,102,0.12)', text: '#ff3366' },
+    interface:    { bg: 'rgba(45,212,191,0.12)', text: '#2dd4bf' },
+    enum:         { bg: 'rgba(163,230,53,0.12)', text: '#a3e635' },
+    module:       { bg: 'rgba(56,189,248,0.12)', text: '#38bdf8' },
+    table:        { bg: 'rgba(251,146,60,0.12)', text: '#fb923c' },
+    view:         { bg: 'rgba(45,212,191,0.08)', text: '#5eead4' },
+    sql_function: { bg: 'rgba(244,114,182,0.12)', text: '#f472b6' },
+    trigger:      { bg: 'rgba(255,51,102,0.08)', text: '#fb7185' },
+    index:        { bg: 'rgba(255,255,255,0.05)', text: 'rgba(255,255,255,0.55)' },
+    migration:    { bg: 'rgba(139,92,246,0.12)', text: '#8b5cf6' },
+    policy:       { bg: 'rgba(232,121,249,0.12)', text: '#e879f9' },
+    provider:     { bg: 'rgba(99,102,241,0.12)', text: '#818cf8' },
   };
 
+  // --- Language colors ---
+  const LANG_COLORS = {
+    TypeScript: '#00f0ff',
+    JavaScript: '#ffb800',
+    Python:     '#a78bfa',
+    Go:         '#00ff9d',
+    Rust:       '#fb923c',
+    Java:       '#ff3366',
+    Dart:       '#38bdf8',
+    Ruby:       '#f472b6',
+    CSS:        '#e879f9',
+    HTML:       '#fbbf24',
+    SQL:        '#2dd4bf',
+    Swift:      '#fb7185',
+    Kotlin:     '#818cf8',
+    C:          '#67e8f9',
+    'C++':      '#5eead4',
+    PHP:        '#a3e635',
+  };
+
+  function typeBadgeStyle(type) {
+    const c = TYPE_COLORS[type] || { bg: 'rgba(255,255,255,0.05)', text: 'rgba(255,255,255,0.55)' };
+    return `background:${c.bg}; color:${c.text};`;
+  }
+
   // ═══════════════════════════════════════════════
-  // TAB SWITCHING
+  // TAB / NAV SWITCHING
   // ═══════════════════════════════════════════════
 
   function switchTab(tabName) {
     activeTab = tabName;
 
-    // Update tab buttons
-    $$('.tab-btn').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.tab === tabName);
+    // Update nav items
+    $$('.nav-item').forEach(item => {
+      item.classList.toggle('active', item.dataset.tab === tabName);
     });
 
     // Update tab panels
@@ -69,7 +97,6 @@ const app = (() => {
     }
 
     // Lazy-load tab data if scan exists
-    // 'cached' means server pre-built it — still need to fetch and render
     if (currentScan && (!tabLoaded[tabName] || tabLoaded[tabName] === 'cached')) {
       loadTabData(tabName);
     }
@@ -107,9 +134,8 @@ const app = (() => {
         if (data.suggestions.length === 0) { dropdown.classList.add('hidden'); return; }
         dropdown.innerHTML = data.suggestions.map(s => {
           const name = s.split('/').filter(Boolean).pop() || s;
-          return `<div class="ac-item px-3 py-1.5 hover:bg-surface-200 cursor-pointer text-sm truncate" data-path="${s}" title="${s}">📁 ${name}</div>`;
+          return `<div class="ac-item px-3 py-1.5 cursor-pointer text-sm truncate" style="color: var(--text-secondary)" onmouseover="this.style.background='var(--glass-bg-hover)'" onmouseout="this.style.background=''" data-path="${s}" title="${s}">&#x1F4C1; ${name}</div>`;
         }).join('');
-        // Position dropdown to the right of the input
         const rect = pathInput.getBoundingClientRect();
         dropdown.style.left = (rect.right + 6) + 'px';
         dropdown.style.top = rect.top + 'px';
@@ -140,37 +166,63 @@ const app = (() => {
   let _pollTimer = null;
 
   function pollScanProgress(scanId) {
-    if (_pollTimer) clearInterval(_pollTimer);
+    if (_pollTimer) clearTimeout(_pollTimer);
 
-    _pollTimer = setInterval(async () => {
-      try {
-        const res = await fetch(`/api/scan/${scanId}/status`);
-        if (!res.ok) return;
-        const info = await res.json();
+    let interval = 800;
+    const pollStart = Date.now();
 
-        const total = info.items_count;
-        const done = info.blocks_extracted;
-        const analyses = info.analyses_ready || [];
+    function doPoll() {
+      _pollTimer = setTimeout(async () => {
+        try {
+          const res = await fetch(`/api/scan/${scanId}/status`);
+          if (!res.ok) { doPoll(); return; }
+          const info = await res.json();
 
-        if (info.status === 'extracting') {
-          setStatus(`Extracting blocks... ${done}/${total}`);
-        } else if (info.status === 'analyzing') {
-          setStatus(`Analyzing... (${analyses.length}/6 complete)`);
-          // Mark analyses that finished as tab-loadable
-          analyses.forEach(a => { tabLoaded[a] = 'cached'; });
-        } else if (info.status === 'ready') {
-          clearInterval(_pollTimer);
-          _pollTimer = null;
-          setStatus(`${total} items — all analyses ready`);
-          analyses.forEach(a => { tabLoaded[a] = 'cached'; });
+          const total = info.items_count;
+          const done = info.blocks_extracted;
+          const analyses = info.analyses_ready || [];
 
-          // Auto-load current tab if it just became ready
-          if (activeTab !== 'scan') {
-            loadTabData(activeTab);
+          // Show progress bar during extraction
+          const progressBar = $('#progress-bar');
+          const progressFill = $('#progress-fill');
+          const progressText = $('#progress-text');
+
+          if (info.status === 'extracting') {
+            const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+            setStatus(`Extracting blocks... ${done}/${total}`);
+            if (progressBar) { progressBar.classList.remove('hidden'); }
+            if (progressFill) { progressFill.style.width = pct + '%'; }
+            if (progressText) { progressText.classList.remove('hidden'); progressText.textContent = pct + '%'; }
+          } else if (info.status === 'analyzing') {
+            setStatus(`Analyzing... (${analyses.length}/6 complete)`);
+            if (progressFill) { progressFill.style.width = (50 + analyses.length * 8) + '%'; }
+            analyses.forEach(a => { tabLoaded[a] = 'cached'; });
+          } else if (info.status === 'ready') {
+            _pollTimer = null;
+            setStatus(`${total} items — all analyses ready`);
+            if (progressBar) { progressBar.classList.add('hidden'); }
+            if (progressText) { progressText.classList.add('hidden'); }
+            analyses.forEach(a => { tabLoaded[a] = 'cached'; });
+
+            fetchItemStats(scanId);
+            loadDetailCards();
+            ['catalog', 'architecture', 'health', 'docs', 'deadcode', 'tour'].forEach(tab => {
+              loadTabData(tab);
+            });
+            return; // stop polling
           }
-        }
-      } catch (_) { /* ignore network blips */ }
-    }, 800);
+        } catch (_) { /* ignore network blips */ }
+
+        // Adaptive backoff: 800ms → 2s after 30s → 4s after 2min
+        const elapsed = Date.now() - pollStart;
+        if (elapsed > 120000) interval = 4000;
+        else if (elapsed > 30000) interval = 2000;
+
+        doPoll();
+      }, interval);
+    }
+
+    doPoll();
   }
 
   async function scan() {
@@ -180,10 +232,12 @@ const app = (() => {
     setStatus('Scanning...');
     $('#scan-btn').disabled = true;
 
-    // Reset all tab loaded states
     Object.keys(tabLoaded).forEach(k => delete tabLoaded[k]);
     catalogData = null;
     tourData = null;
+    itemStats = {};
+    healthData = null;
+    langBreakdown = null;
 
     try {
       const res = await fetch('/api/scan', {
@@ -206,13 +260,105 @@ const app = (() => {
       setStatus(`Found ${data.count} items — processing...`);
       $('#scan-dir').textContent = data.source_dir;
 
-      // Start non-blocking background poll — UI is immediately usable
       pollScanProgress(data.scan_id);
 
     } catch (err) {
       setStatus(`Error: ${err.message}`);
     } finally {
       $('#scan-btn').disabled = false;
+    }
+  }
+
+  // ═══════════════════════════════════════════════
+  // ITEM STATS (Phase 5)
+  // ═══════════════════════════════════════════════
+
+  async function fetchItemStats(scanId) {
+    try {
+      const res = await fetch(`/api/analysis/item-stats/${scanId}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      itemStats = data.stats || {};
+      renderResults(); // re-render with stats
+    } catch (_) { /* endpoint may not exist yet */ }
+  }
+
+  // ═══════════════════════════════════════════════
+  // DETAIL CARDS (Phase 4)
+  // ═══════════════════════════════════════════════
+
+  async function loadDetailCards() {
+    // Compute language breakdown from allItems
+    const langCounts = {};
+    allItems.forEach(item => {
+      langCounts[item.language] = (langCounts[item.language] || 0) + 1;
+    });
+    const total = allItems.length || 1;
+    langBreakdown = Object.entries(langCounts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([lang, count]) => ({
+        language: lang,
+        count,
+        pct: Math.round((count / total) * 100),
+        color: LANG_COLORS[lang] || 'rgba(255,255,255,0.3)',
+      }));
+
+    // Fetch health data if available
+    if (currentScan) {
+      try {
+        const res = await fetch('/api/analysis/health', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scan_id: currentScan.scan_id }),
+        });
+        if (res.ok) {
+          healthData = await res.json();
+        }
+      } catch (_) {}
+    }
+  }
+
+  function renderDetailCards() {
+    // Health card
+    const healthCard = $('#detail-health-card');
+    const healthContent = $('#detail-health-content');
+    if (healthData && healthCard) {
+      const score = healthData.score || 0;
+      const color = score >= 70 ? 'var(--success)' : score >= 40 ? 'var(--warning)' : 'var(--error)';
+      healthContent.innerHTML = `
+        <div class="flex items-center gap-3 mb-2">
+          <span class="text-xl font-bold" style="color: ${color}">${score}</span>
+          <span class="text-xs" style="color: var(--text-muted)">/100</span>
+        </div>
+        <div class="health-bar">
+          <div class="health-bar-fill" style="width: ${score}%; background: ${color}"></div>
+        </div>
+        <div class="grid grid-cols-2 gap-2 mt-3 text-[0.6875rem]">
+          <div style="color: var(--text-muted)">Complexity <span style="color: var(--text-secondary)">${healthData.long_functions?.length || 0}</span></div>
+          <div style="color: var(--text-muted)">Coupling <span style="color: var(--text-secondary)">${healthData.coupling?.length || 0}</span></div>
+          <div style="color: var(--text-muted)">Duplications <span style="color: var(--text-secondary)">${healthData.duplications?.length || 0}</span></div>
+          <div style="color: var(--text-muted)">Circular <span style="color: var(--text-secondary)">0</span></div>
+        </div>`;
+      healthCard.classList.remove('hidden');
+    }
+
+    // Language breakdown card
+    const langCard = $('#detail-lang-card');
+    const langContent = $('#detail-lang-content');
+    if (langBreakdown && langBreakdown.length > 0 && langCard) {
+      const rows = langBreakdown.slice(0, 6).map(l => `
+        <div class="flex items-center gap-2 py-0.5">
+          <span class="w-2 h-2 rounded-full shrink-0" style="background: ${l.color}"></span>
+          <span class="flex-1 text-[0.6875rem]" style="color: var(--text-secondary)">${esc(l.language)}</span>
+          <span class="text-[0.6875rem]" style="color: var(--text-muted)">${l.count}</span>
+        </div>`).join('');
+
+      const barSegments = langBreakdown.map(l =>
+        `<div class="lang-bar-segment" style="width: ${l.pct}%; background: ${l.color}"></div>`
+      ).join('');
+
+      langContent.innerHTML = `${rows}<div class="lang-bar mt-2">${barSegments}</div>`;
+      langCard.classList.remove('hidden');
     }
   }
 
@@ -247,7 +393,7 @@ const app = (() => {
   }
 
   // ═══════════════════════════════════════════════
-  // RENDER SCAN RESULTS
+  // RENDER SCAN RESULTS (with enriched columns)
   // ═══════════════════════════════════════════════
 
   function renderResults() {
@@ -272,28 +418,48 @@ const app = (() => {
     let html = '';
     for (const [file, items] of Object.entries(byFile)) {
       const shortFile = file.replace(currentScan?.source_dir || '', '').replace(/^\//, '');
-      html += `<tr class="bg-surface-100"><td colspan="5" class="px-4 py-1.5 text-xs text-gray-400 font-mono">${shortFile}</td></tr>`;
+      html += `<tr class="file-group-header" style="background: var(--canvas-raised)"><td colspan="8" class="px-4 py-1.5 text-xs font-mono" style="color: var(--text-muted)">${shortFile}</td></tr>`;
 
       for (const item of items) {
         const checked = selectedIds.has(item.id) ? 'checked' : '';
-        const colors = TYPE_COLORS[item.type] || 'bg-gray-700 text-gray-300';
+        const badgeStyle = typeBadgeStyle(item.type);
+        const stats = itemStats[item.id];
+
+        // DEPS column
+        const depsVal = stats ? stats.deps : '-';
+        // SIZE column
+        const sizeVal = stats && stats.size_bytes != null ? (stats.size_bytes < 1024 ? stats.size_bytes + 'B' : Math.round(stats.size_bytes / 1024) + 'kb') : '-';
+        // HEALTH column
+        let healthCol = '<span style="color: var(--text-muted)">-</span>';
+        if (stats && stats.health_score != null) {
+          const hs = stats.health_score;
+          const hColor = hs >= 70 ? 'var(--success)' : hs >= 40 ? 'var(--warning)' : 'var(--error)';
+          healthCol = `<span class="inline-flex items-center gap-1"><span class="mini-health-bar"><span class="mini-health-bar-fill" style="width:${hs}%; background:${hColor}"></span></span><span style="color:${hColor}">${hs}</span></span>`;
+        }
+
         html += `
-          <tr class="result-row hover:bg-surface-200 cursor-pointer border-b border-gray-800/50" data-id="${item.id}">
+          <tr class="result-row cursor-pointer" style="border-bottom: 1px solid var(--border-default)" data-id="${item.id}">
             <td class="pl-4 pr-2 py-1.5 w-8">
-              <input type="checkbox" class="item-check rounded bg-surface-200 border-gray-600" data-id="${item.id}" ${checked}>
+              <input type="checkbox" class="item-check" data-id="${item.id}" ${checked}>
             </td>
             <td class="px-2 py-1.5 w-24">
-              <span class="text-xs px-1.5 py-0.5 rounded ${colors}">${item.type}</span>
+              <span class="text-xs px-1.5 py-0.5 rounded" style="${badgeStyle}">${item.type}</span>
             </td>
-            <td class="px-2 py-1.5 font-medium text-sm">${item.qualified_name}</td>
-            <td class="px-2 py-1.5 text-xs text-gray-500">${item.language}</td>
-            <td class="pr-4 py-1.5 text-xs text-gray-600 text-right">L${item.line}${item.end_line ? '-' + item.end_line : ''}</td>
+            <td class="px-2 py-1.5 font-medium text-sm" style="color: var(--text-primary)">${item.qualified_name}</td>
+            <td class="px-2 py-1.5 text-xs" style="color: var(--text-muted)">${item.language}</td>
+            <td class="px-2 py-1.5 text-xs" style="color: var(--text-secondary)">${depsVal}</td>
+            <td class="px-2 py-1.5 text-xs" style="color: var(--text-secondary)">${sizeVal}</td>
+            <td class="px-2 py-1.5 text-xs">${healthCol}</td>
+            <td class="pr-4 py-1.5 text-xs text-right" style="color: var(--text-muted)">L${item.line}${item.end_line ? '-' + item.end_line : ''}</td>
           </tr>`;
       }
     }
 
     tbody.innerHTML = html;
-    $('#item-count').textContent = `${filteredItems.length} items`;
+    const countEl = $('#item-count');
+    if (countEl) countEl.textContent = `${filteredItems.length} items`;
+    const selInfo = $('#selected-count-info');
+    if (selInfo) selInfo.textContent = `${selectedIds.size} selected`;
 
     tbody.querySelectorAll('.item-check').forEach(cb => {
       cb.addEventListener('change', (e) => {
@@ -326,6 +492,8 @@ const app = (() => {
   function updateSelection() {
     const n = selectedIds.size;
     $('#selected-count').textContent = `${n} selected`;
+    const selInfo = $('#selected-count-info');
+    if (selInfo) selInfo.textContent = `${n} selected`;
     $('#extract-btn').disabled = n === 0;
     $('#smart-extract-btn').disabled = n === 0;
     $('#package-btn').disabled = n === 0;
@@ -343,8 +511,7 @@ const app = (() => {
 
       $('#preview-name').textContent = data.name;
       const badge = $('#preview-badge');
-      const colors = TYPE_COLORS[data.type] || 'bg-gray-700 text-gray-300';
-      badge.className = `ml-2 text-xs px-1.5 py-0.5 rounded ${colors}`;
+      badge.setAttribute('style', typeBadgeStyle(data.type));
       badge.textContent = data.type;
 
       const codeEl = $('#preview-code');
@@ -352,9 +519,20 @@ const app = (() => {
       codeEl.className = `text-xs language-${data.language}`;
       hljs.highlightElement(codeEl);
 
+      // Stats line
+      const statsEl = $('#preview-stats');
+      if (statsEl) {
+        const lineCount = data.code ? data.code.split('\n').length : 0;
+        statsEl.textContent = `${lineCount} lines · ${data.language} · ${data.type}`;
+        statsEl.classList.remove('hidden');
+      }
+
       const panel = $('#preview-panel');
       panel.classList.remove('hidden');
       panel.classList.add('flex');
+
+      // Render detail cards
+      renderDetailCards();
     } catch (err) {
       setStatus(`Preview error: ${err.message}`);
     }
@@ -479,7 +657,6 @@ const app = (() => {
     $('#catalog-empty').classList.add('hidden');
     $('#catalog-content').classList.remove('hidden');
 
-    // Populate language filter
     const langs = new Set(items.map(i => i.language));
     const sel = $('#catalog-lang-filter');
     sel.innerHTML = '<option value="">All Languages</option>' +
@@ -490,8 +667,9 @@ const app = (() => {
 
   function renderCatalogCards(items) {
     const grid = $('#catalog-grid');
-    grid.innerHTML = items.map((item, idx) => {
-      const colors = TYPE_COLORS[item.type] || 'bg-gray-700 text-gray-300';
+    grid.innerHTML = items.map((item) => {
+      const badgeStyle = typeBadgeStyle(item.type);
+      const langBadgeStyle = `background: rgba(255,255,255,0.05); color: var(--text-secondary);`;
       const params = (item.parameters || []).map(p =>
         `<dt>${esc(p.name)}${p.type_annotation ? ': ' + esc(p.type_annotation) : ''}${p.default_value ? ' = ' + esc(p.default_value) : ''}</dt>`
       ).join('');
@@ -500,11 +678,11 @@ const app = (() => {
         <div class="card-header">
           <span class="card-name">${esc(item.name)}</span>
           <div class="card-badges">
-            <span class="card-badge ${colors}">${item.type}</span>
-            <span class="card-badge bg-gray-700/60 text-gray-300">${item.language}</span>
+            <span class="card-badge" style="${badgeStyle}">${item.type}</span>
+            <span class="card-badge" style="${langBadgeStyle}">${item.language}</span>
           </div>
         </div>
-        ${item.line_count ? `<div class="text-xs text-gray-600">${item.line_count} lines</div>` : ''}
+        ${item.line_count ? `<div class="text-xs" style="color: var(--text-muted)">${item.line_count} lines</div>` : ''}
         ${params ? `<dl class="card-params">${params}</dl>` : ''}
         <div class="card-code-toggle" onclick="this.nextElementSibling.classList.toggle('hidden')">Show code</div>
         <div class="card-code hidden"><pre><code class="text-xs">${esc(item.code || '')}</code></pre></div>
@@ -558,14 +736,12 @@ const app = (() => {
     $('#arch-empty').classList.add('hidden');
     $('#arch-content').classList.remove('hidden');
 
-    // Render mermaid diagram
     const container = $('#arch-diagram');
     container.innerHTML = `<pre class="mermaid">${data.mermaid}</pre>`;
     if (window.mermaid) {
       mermaid.run({ nodes: container.querySelectorAll('.mermaid') });
     }
 
-    // Render module list
     const modList = $('#arch-modules');
     modList.innerHTML = (data.modules || []).map(m => `
       <div class="module-item" onclick="this.classList.toggle('expanded')">
@@ -574,7 +750,7 @@ const app = (() => {
           <span class="module-item-count">${m.item_count} items</span>
         </div>
         <div class="module-item-body">
-          ${(m.items || []).map(i => `<div class="py-0.5">${esc(i.name)} <span class="text-gray-600">(${i.type})</span></div>`).join('')}
+          ${(m.items || []).map(i => `<div class="py-0.5">${esc(i.name)} <span style="color: var(--text-muted)">(${i.type})</span></div>`).join('')}
         </div>
       </div>
     `).join('');
@@ -604,6 +780,7 @@ const app = (() => {
       if (!res.ok) throw new Error('Failed to analyze health');
       const data = await res.json();
       tabLoaded.health = true;
+      healthData = data;
       renderHealth(data);
       setStatus('Health analysis loaded');
     } catch (err) {
@@ -615,40 +792,36 @@ const app = (() => {
     $('#health-empty').classList.add('hidden');
     $('#health-content').classList.remove('hidden');
 
-    // Overall score
     const score = data.score || 0;
-    const cls = score >= 70 ? 'health-green' : score >= 40 ? 'health-yellow' : 'health-red';
-    $('#health-score').innerHTML = `<span class="${cls}">Health: ${score}/100</span>`;
+    const color = score >= 70 ? 'var(--success)' : score >= 40 ? 'var(--warning)' : 'var(--error)';
+    $('#health-score').innerHTML = `<span style="color: ${color}">Health: ${score}/100</span>`;
 
-    // Long functions
     const longFns = $('#health-long-fns');
     longFns.innerHTML = (data.long_functions || []).map(f => {
       const len = f.line_count || 0;
-      const c = len < 30 ? 'health-green' : len < 60 ? 'health-yellow' : 'health-red';
+      const c = len < 30 ? 'var(--success)' : len < 60 ? 'var(--warning)' : 'var(--error)';
       return `<div class="metric-card" onclick="app.showPreview('${esc(f.item_id || '')}')">
         <div class="metric-name">${esc(f.name)}</div>
-        <div class="metric-value ${c}">${len} lines</div>
-        <div class="text-xs text-gray-600 truncate">${esc(f.file || '')}</div>
+        <div class="metric-value" style="color: ${c}">${len} lines</div>
+        <div class="text-xs truncate" style="color: var(--text-muted)">${esc(f.file || '')}</div>
       </div>`;
-    }).join('') || '<div class="text-xs text-gray-600">No long functions found</div>';
+    }).join('') || `<div class="text-xs" style="color: var(--text-muted)">No long functions found</div>`;
 
-    // Duplications
     const dups = $('#health-duplicates');
     dups.innerHTML = (data.duplications || []).map(d => {
       return `<div class="metric-card">
         <div class="metric-name">${esc(d.item_a)} &harr; ${esc(d.item_b)}</div>
-        <div class="metric-value health-yellow">${Math.round(d.similarity * 100)}% similar</div>
+        <div class="metric-value" style="color: var(--warning)">${Math.round(d.similarity * 100)}% similar</div>
       </div>`;
-    }).join('') || '<div class="text-xs text-gray-600">No duplications found</div>';
+    }).join('') || `<div class="text-xs" style="color: var(--text-muted)">No duplications found</div>`;
 
-    // Coupling
     const coupling = $('#health-coupling');
     coupling.innerHTML = (data.coupling || []).map(c => {
       return `<div class="metric-card" onclick="app.showPreview('${esc(c.item_id || '')}')">
         <div class="metric-name">${esc(c.name)}</div>
         <div class="metric-value">${c.score} connections</div>
       </div>`;
-    }).join('') || '<div class="text-xs text-gray-600">No coupling data</div>';
+    }).join('') || `<div class="text-xs" style="color: var(--text-muted)">No coupling data</div>`;
   }
 
   // ═══════════════════════════════════════════════
@@ -683,9 +856,9 @@ const app = (() => {
     body.innerHTML = (data.sections || []).map(s => {
       const members = (s.members || []).map(m => `<li>${esc(m)}</li>`).join('');
       return `<div class="docs-section">
-        <h3>${esc(s.name)} <span class="text-xs text-gray-500">(${s.type})</span></h3>
+        <h3>${esc(s.name)} <span class="text-xs" style="color: var(--text-muted)">(${s.type})</span></h3>
         ${s.signature ? `<div class="docs-signature">${esc(s.signature)}</div>` : ''}
-        ${s.description ? `<p class="text-xs text-gray-400 mb-2">${esc(s.description)}</p>` : ''}
+        ${s.description ? `<p class="text-xs mb-2" style="color: var(--text-secondary)">${esc(s.description)}</p>` : ''}
         ${members ? `<ul class="docs-members">${members}</ul>` : ''}
       </div>`;
     }).join('');
@@ -759,22 +932,22 @@ const app = (() => {
 
     (data.added || []).forEach(item => {
       html += `<div class="diff-item added">
-        <span class="text-xs text-green-400">+ ADDED</span>
-        <div class="text-sm font-medium">${esc(item.name)} <span class="text-xs text-gray-500">(${item.type})</span></div>
+        <span class="text-xs" style="color: var(--success)">+ ADDED</span>
+        <div class="text-sm font-medium" style="color: var(--text-primary)">${esc(item.name)} <span class="text-xs" style="color: var(--text-muted)">(${item.type})</span></div>
       </div>`;
     });
 
     (data.removed || []).forEach(item => {
       html += `<div class="diff-item removed">
-        <span class="text-xs text-red-400">- REMOVED</span>
-        <div class="text-sm font-medium">${esc(item.name)} <span class="text-xs text-gray-500">(${item.type})</span></div>
+        <span class="text-xs" style="color: var(--error)">- REMOVED</span>
+        <div class="text-sm font-medium" style="color: var(--text-primary)">${esc(item.name)} <span class="text-xs" style="color: var(--text-muted)">(${item.type})</span></div>
       </div>`;
     });
 
     (data.modified || []).forEach(item => {
       html += `<div class="diff-item modified">
-        <span class="text-xs text-amber-400">~ MODIFIED</span>
-        <div class="text-sm font-medium">${esc(item.name)} <span class="text-xs text-gray-500">(${item.type})</span></div>
+        <span class="text-xs" style="color: var(--warning)">~ MODIFIED</span>
+        <div class="text-sm font-medium" style="color: var(--text-primary)">${esc(item.name)} <span class="text-xs" style="color: var(--text-muted)">(${item.type})</span></div>
         ${item.before && item.after ? `<div class="diff-side-by-side">
           <pre><code class="text-xs">${esc(item.before)}</code></pre>
           <pre><code class="text-xs">${esc(item.after)}</code></pre>
@@ -816,14 +989,14 @@ const app = (() => {
 
     const tbody = $('#deadcode-body');
     tbody.innerHTML = (data.items || []).map(item => {
-      const confCls = item.confidence >= 0.8 ? 'health-red' : item.confidence >= 0.5 ? 'health-yellow' : 'health-green';
+      const confColor = item.confidence >= 0.8 ? 'var(--error)' : item.confidence >= 0.5 ? 'var(--warning)' : 'var(--success)';
       const shortFile = (item.file || '').replace(currentScan?.source_dir || '', '').replace(/^\//, '');
-      return `<tr class="result-row hover:bg-surface-200 cursor-pointer border-b border-gray-800/50" onclick="app.showPreview('${esc(item.item_id || '')}')">
-        <td class="px-3 py-2 font-medium">${esc(item.name)}</td>
-        <td class="px-3 py-2 text-xs">${item.type}</td>
-        <td class="px-3 py-2 text-xs text-gray-500 truncate max-w-xs">${shortFile}</td>
-        <td class="px-3 py-2 text-xs ${confCls}">${Math.round(item.confidence * 100)}%</td>
-        <td class="px-3 py-2 text-xs text-gray-500">${esc(item.reason || '')}</td>
+      return `<tr class="result-row cursor-pointer" style="border-bottom: 1px solid var(--border-default)" onclick="app.showPreview('${esc(item.item_id || '')}')">
+        <td class="px-3 py-2 font-medium" style="color: var(--text-primary)">${esc(item.name)}</td>
+        <td class="px-3 py-2 text-xs"><span class="px-1.5 py-0.5 rounded" style="${typeBadgeStyle(item.type)}">${item.type}</span></td>
+        <td class="px-3 py-2 text-xs truncate max-w-xs" style="color: var(--text-muted)">${shortFile}</td>
+        <td class="px-3 py-2 text-xs" style="color: ${confColor}">${Math.round(item.confidence * 100)}%</td>
+        <td class="px-3 py-2 text-xs" style="color: var(--text-muted)">${esc(item.reason || '')}</td>
       </tr>`;
     }).join('');
   }
@@ -859,7 +1032,6 @@ const app = (() => {
     $('#tour-empty').classList.add('hidden');
     $('#tour-content').classList.remove('hidden');
 
-    // Step list
     const list = $('#tour-step-list');
     list.innerHTML = tourData.steps.map((s, i) => `
       <div class="tour-step-list-item ${i === tourStep ? 'active' : ''}" onclick="app.goToTourStep(${i})">
@@ -867,7 +1039,6 @@ const app = (() => {
       </div>
     `).join('');
 
-    // Step content
     renderTourStep();
   }
 
@@ -884,21 +1055,18 @@ const app = (() => {
       <div class="flex items-center mb-2">
         <span class="tour-step-number">${tourStep + 1}</span>
         <span class="tour-step-title">${esc(step.name)}</span>
-        <span class="ml-2 text-xs text-gray-500">${step.type || ''} &middot; ${step.language || ''}</span>
+        <span class="ml-2 text-xs" style="color: var(--text-muted)">${step.type || ''} &middot; ${step.language || ''}</span>
       </div>
       <div class="tour-step-desc">${esc(step.description || '')}</div>
       ${step.code ? `<div class="tour-step-code"><pre><code class="text-xs">${esc(step.code)}</code></pre></div>` : ''}
       ${deps ? `<div class="tour-step-deps">Dependencies: ${deps}</div>` : ''}
     </div>`;
 
-    // Highlight code
     content.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
 
-    // Update nav buttons
     $('#tour-prev').disabled = tourStep === 0;
     $('#tour-next').disabled = tourStep >= tourData.steps.length - 1;
 
-    // Update step list active state
     $$('.tour-step-list-item').forEach((el, i) => {
       el.classList.toggle('active', i === tourStep);
     });
@@ -947,9 +1115,9 @@ const app = (() => {
     const container = $('#recent-scans');
     container.innerHTML = recent.map(r => {
       const short = r.path.replace(/^\/Users\/\w+\//, '~/');
-      return `<div class="recent-item group flex items-center gap-1 px-2 py-1 rounded hover:bg-surface-200 cursor-pointer text-gray-400" data-path="${r.path}" data-scan-id="${r.scanId || ''}">
-        <span class="truncate flex-1">${short} <span class="text-gray-600">(${r.count})</span></span>
-        <button class="recent-delete opacity-0 group-hover:opacity-100 text-gray-600 hover:text-red-400 transition-opacity px-1" title="Remove">&times;</button>
+      return `<div class="recent-item group flex items-center gap-1 px-2 py-1 rounded cursor-pointer" style="color: var(--text-secondary)" data-path="${r.path}" data-scan-id="${r.scanId || ''}">
+        <span class="truncate flex-1">${short} <span style="color: var(--text-muted)">(${r.count})</span></span>
+        <button class="recent-delete opacity-0 group-hover:opacity-100 transition-opacity px-1" style="color: var(--text-muted)" title="Remove">&times;</button>
       </div>`;
     }).join('');
     container.querySelectorAll('.recent-item').forEach(el => {
@@ -965,34 +1133,31 @@ const app = (() => {
   }
 
   async function deleteRecentScan(path, scanId) {
-    // Delete from server if we have a scan_id
     if (scanId) {
       try {
         await fetch(`/api/scan/${scanId}`, { method: 'DELETE' });
-      } catch (_) { /* ignore — server may have restarted */ }
+      } catch (_) {}
     }
 
-    // Remove from localStorage
     let recent = JSON.parse(localStorage.getItem('ce_recent') || '[]');
     recent = recent.filter(r => r.path !== path);
     localStorage.setItem('ce_recent', JSON.stringify(recent));
     renderRecentScans();
 
-    // If the deleted scan is the current one, clear the entire UI
     if (currentScan && currentScan.source_dir === path) {
-      // Stop any background polling
-      if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+      if (_pollTimer) { clearTimeout(_pollTimer); _pollTimer = null; }
 
-      // Clear data
       currentScan = null;
       allItems = [];
       filteredItems = [];
       selectedIds.clear();
       catalogData = null;
       tourData = null;
+      itemStats = {};
+      healthData = null;
+      langBreakdown = null;
       Object.keys(tabLoaded).forEach(k => delete tabLoaded[k]);
 
-      // Reset scan tab
       $('#results-body').innerHTML = '';
       $('#results-table').classList.add('hidden');
       $('#empty-state').classList.remove('hidden');
@@ -1001,7 +1166,6 @@ const app = (() => {
       $('#download-link').classList.add('hidden');
       hideProgress();
 
-      // Reset all analysis tab panels — show empty, hide content
       const tabPanels = ['catalog', 'arch', 'health', 'docs', 'deadcode', 'tour'];
       tabPanels.forEach(t => {
         const empty = $(`#${t}-empty`);
@@ -1010,10 +1174,13 @@ const app = (() => {
         if (content) content.classList.add('hidden');
       });
 
-      // Reset footer
-      updateSelection();
+      // Hide detail panel cards
+      const hc = $('#detail-health-card');
+      const lc = $('#detail-lang-card');
+      if (hc) hc.classList.add('hidden');
+      if (lc) lc.classList.add('hidden');
 
-      // Switch back to scan tab
+      updateSelection();
       switchTab('scan');
       setStatus('Ready');
     }
@@ -1024,7 +1191,8 @@ const app = (() => {
   // ═══════════════════════════════════════════════
 
   function setStatus(text) {
-    $('#status-text').textContent = text;
+    const footer = $('#footer-status');
+    if (footer) footer.textContent = text;
   }
 
   function esc(s) {
