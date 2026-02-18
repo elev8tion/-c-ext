@@ -3864,7 +3864,10 @@ const app = (() => {
 
       case 'select':
         if (action.item_ids) {
-          action.item_ids.forEach(id => selectedIds.add(id));
+          action.item_ids.forEach(id => {
+            selectedIds.add(id);
+            boilerplateSelectedIds.add(id);
+          });
           updateSelection();
           // Re-render scan list to show checkmarks
           if (typeof renderItems === 'function') renderItems();
