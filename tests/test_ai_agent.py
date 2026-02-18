@@ -472,7 +472,7 @@ class TestAgentChat:
             result = await service.agent_chat("Loop forever", "scan-1", [])
             assert "actions" in result
             assert result["answer"]
-            assert service.client.post.call_count == 5
+            assert service.client.post.call_count == 8
             await service.close()
         asyncio.run(_test())
 

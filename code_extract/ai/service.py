@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # Limits to keep prompts within context window
 MAX_CODE_BLOCKS = 10
 MAX_CODE_CHARS = 1000
-MAX_TOOL_ITERATIONS = 5
+MAX_TOOL_ITERATIONS = 8
 
 
 class DeepSeekService:
@@ -159,17 +159,26 @@ class DeepSeekService:
         model_name = self.config.model.value
 
         for iteration in range(MAX_TOOL_ITERATIONS):
+            logger.info("[agent] iteration=%d, model=%s, messages=%d",
+                        iteration, self.config.model.value, len(messages))
+
+            # On the last iteration, omit tools to force a text summary
+            # instead of another tool call that would be lost.
+            is_last = iteration == MAX_TOOL_ITERATIONS - 1
+            request_body: dict[str, Any] = {
+                "model": self.config.model.value,
+                "messages": messages,
+                "temperature": self.config.temperature,
+                "max_tokens": self.config.max_tokens,
+                "stream": False,
+            }
+            if not is_last:
+                request_body["tools"] = TOOL_DEFINITIONS
+                request_body["tool_choice"] = "auto"
+
             response = await self.client.post(
                 f"{self.config.base_url}/chat/completions",
-                json={
-                    "model": self.config.model.value,
-                    "messages": messages,
-                    "tools": TOOL_DEFINITIONS,
-                    "tool_choice": "auto",
-                    "temperature": self.config.temperature,
-                    "max_tokens": self.config.max_tokens,
-                    "stream": False,
-                },
+                json=request_body,
             )
             response.raise_for_status()
             data = response.json()
@@ -184,9 +193,15 @@ class DeepSeekService:
             message = choice.get("message", {})
             finish_reason = choice.get("finish_reason", "stop")
 
+            logger.info("[agent] finish_reason=%s, has_tool_calls=%s, content_len=%d",
+                        finish_reason, bool(message.get("tool_calls")),
+                        len(message.get("content") or ""))
+
             # No tool calls — we have the final answer
             if finish_reason != "tool_calls" and not message.get("tool_calls"):
                 answer = message.get("content", "")
+                logger.info("[agent] final answer, %d chars, %d actions",
+                            len(answer), len(all_actions))
                 history_update = [
                     {"role": "user", "content": query},
                     {"role": "assistant", "content": answer},
@@ -212,7 +227,11 @@ class DeepSeekService:
                     arguments = {}
 
                 tool_id = tool_call.get("id", "")
+                logger.info("[agent] tool_call: %s(%s) id=%s",
+                            tool_name, json.dumps(arguments)[:200], tool_id)
                 result_text, actions = execute_tool(tool_name, scan_id, arguments)
+                logger.info("[agent] tool_result: %d chars, %d actions",
+                            len(result_text), len(actions))
                 all_actions.extend(actions)
 
                 # Add tool result to conversation
