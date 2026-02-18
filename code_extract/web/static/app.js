@@ -3773,7 +3773,7 @@ const app = (() => {
           scan_id: currentScan.scan_id,
           query,
           item_ids: selectedIds.size > 0 ? [...selectedIds] : null,
-          model: $('#ai-model')?.value || 'deepseek-coder',
+          model: $('#ai-model')?.value || 'deepseek-chat',
           api_key: $('#ai-api-key')?.value || '',
         }),
       });

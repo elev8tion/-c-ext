@@ -160,6 +160,10 @@ async def agent_chat_endpoint(req: AgentChatRequest):
             config.model = AIModel(req.model)
         except ValueError:
             pass
+    else:
+        # Agent needs deepseek-chat for tool-calling support;
+        # deepseek-coder is a completion model that ignores tools.
+        config.model = AIModel.DEEPSEEK_CHAT
 
     if not config.api_key:
         raise HTTPException(
