@@ -73,7 +73,7 @@ class TestDeepSeekService:
         }
         prompt = service._build_system_prompt([], analysis)
         assert "85" in prompt
-        assert "3 items" in prompt
+        assert "3 nodes" in prompt
         assert "1 items" in prompt
 
     def test_build_messages(self):

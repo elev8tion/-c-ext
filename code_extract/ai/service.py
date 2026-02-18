@@ -105,16 +105,18 @@ class DeepSeekService:
             parts.append("\n## Analysis Context:")
             if "health" in analysis_context:
                 health = analysis_context["health"]
-                score = health.get("score", "N/A")
+                score = getattr(health, "score", None) or (health.get("score") if isinstance(health, dict) else "N/A")
                 parts.append(f"Health Score: {score}/100")
             if "dependencies" in analysis_context:
-                parts.append(
-                    f"Dependencies: {len(analysis_context['dependencies'])} items"
-                )
+                dep = analysis_context["dependencies"]
+                # DependencyGraph has .nodes dict and .edges list
+                n_nodes = len(getattr(dep, "nodes", {})) if hasattr(dep, "nodes") else (len(dep) if isinstance(dep, (list, dict)) else 0)
+                n_edges = len(getattr(dep, "edges", [])) if hasattr(dep, "edges") else 0
+                parts.append(f"Dependencies: {n_nodes} nodes, {n_edges} edges")
             if "dead_code" in analysis_context:
-                parts.append(
-                    f"Potential Dead Code: {len(analysis_context['dead_code'])} items"
-                )
+                dc = analysis_context["dead_code"]
+                count = len(dc) if isinstance(dc, (list, dict)) else 0
+                parts.append(f"Potential Dead Code: {count} items")
 
         return "\n".join(parts)
 
