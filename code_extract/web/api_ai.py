@@ -19,6 +19,7 @@ class ChatRequest(BaseModel):
     item_ids: Optional[list[str]] = None
     include_analysis: bool = True
     model: Optional[str] = None
+    api_key: Optional[str] = None
 
 
 @router.post("/chat")
@@ -32,8 +33,8 @@ async def chat_with_scan(req: ChatRequest):
     if not scan:
         raise HTTPException(404, detail="Scan session not found")
 
-    # Check API key
-    config = AIConfig()
+    # Check API key — prefer request key, fall back to env var
+    config = AIConfig(api_key=req.api_key or "")
     if req.model:
         try:
             config.model = AIModel(req.model)

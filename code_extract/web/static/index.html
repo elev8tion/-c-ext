@@ -504,8 +504,11 @@
                 <button onclick="app.aiClearChat()" class="neon-btn-outlined neon-btn-cyan text-xs py-1 px-2">Clear</button>
               </div>
             </div>
-            <div class="text-xs mt-1" style="color: var(--text-muted)">
-              Ask questions about your scanned code — get explanations, refactoring suggestions, and more.
+            <div class="flex items-center gap-2 mt-2">
+              <input id="ai-api-key" type="password" placeholder="DeepSeek API Key"
+                class="glass-input flex-1 px-2 py-1 text-xs" autocomplete="off"
+                onchange="app.aiSaveKey()">
+              <button onclick="app.aiToggleKeyVisibility()" class="text-xs px-1" style="color: var(--text-muted); background:none; border:none; cursor:pointer" title="Show/hide key">&#x1F441;</button>
             </div>
           </div>
           <!-- Chat messages -->

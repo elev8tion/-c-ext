@@ -34,6 +34,7 @@ const app = (() => {
   // AI Chat state
   let aiChatHistory = [];
   let aiLoading = false;
+  const AI_KEY_STORAGE = 'code-extract-ai-key';
 
   // Language compatibility groups (mirrors backend LANGUAGE_GROUPS)
   const REMIX_LANGUAGE_GROUPS = {
@@ -3336,6 +3337,11 @@ const app = (() => {
   // ═══════════════════════════════════════════════
 
   function loadAIChat() {
+    // Restore saved API key
+    const savedKey = localStorage.getItem(AI_KEY_STORAGE) || '';
+    const keyInput = $('#ai-api-key');
+    if (keyInput && savedKey) keyInput.value = savedKey;
+
     if (!currentScan) return;
     fetch(`/api/ai/history/${currentScan.scan_id}`)
       .then(r => r.json())
@@ -3344,6 +3350,21 @@ const app = (() => {
         _aiRenderHistory();
       })
       .catch(() => {});
+  }
+
+  function aiSaveKey() {
+    const key = $('#ai-api-key')?.value || '';
+    if (key) {
+      localStorage.setItem(AI_KEY_STORAGE, key);
+    } else {
+      localStorage.removeItem(AI_KEY_STORAGE);
+    }
+  }
+
+  function aiToggleKeyVisibility() {
+    const input = $('#ai-api-key');
+    if (!input) return;
+    input.type = input.type === 'password' ? 'text' : 'password';
   }
 
   async function aiSendQuery() {
@@ -3377,6 +3398,7 @@ const app = (() => {
           item_ids: items,
           include_analysis: includeAnalysis,
           model,
+          api_key: $('#ai-api-key')?.value || '',
         }),
       });
 
@@ -3545,6 +3567,6 @@ const app = (() => {
     // UX Gap Fixes
     onRemixPaletteSearch, toggleRemixScoreBreakdown,
     // AI Chat
-    aiSendQuery, aiClearChat,
+    aiSendQuery, aiClearChat, aiSaveKey, aiToggleKeyVisibility,
   };
 })();
