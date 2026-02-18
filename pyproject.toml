@@ -19,6 +19,7 @@ web = [
     "fastapi>=0.100",
     "uvicorn[standard]>=0.20",
     "watchfiles>=0.20",
+    "httpx>=0.25",
 ]
 macos = [
     "rumps>=0.4",

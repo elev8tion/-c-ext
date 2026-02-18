@@ -31,6 +31,10 @@ const app = (() => {
   const REMIX_TEMPLATES_KEY = 'code-extract-remix-templates';
   const REMIX_CONTAINER_TYPES = new Set(['class', 'component', 'widget', 'struct', 'trait', 'interface', 'mixin']);
 
+  // AI Chat state
+  let aiChatHistory = [];
+  let aiLoading = false;
+
   // Language compatibility groups (mirrors backend LANGUAGE_GROUPS)
   const REMIX_LANGUAGE_GROUPS = {
     javascript: 'js_ts', typescript: 'js_ts',
@@ -158,6 +162,7 @@ const app = (() => {
       boilerplate: loadBoilerplate,
       migration: loadMigration,
       remix: loadRemix,
+      ai: loadAIChat,
     };
     const loader = loaders[tabName];
     if (loader) loader();
@@ -3327,6 +3332,187 @@ const app = (() => {
   }
 
   // ═══════════════════════════════════════════════
+  // AI CHAT
+  // ═══════════════════════════════════════════════
+
+  function loadAIChat() {
+    if (!currentScan) return;
+    fetch(`/api/ai/history/${currentScan.scan_id}`)
+      .then(r => r.json())
+      .then(data => {
+        aiChatHistory = data.history || [];
+        _aiRenderHistory();
+      })
+      .catch(() => {});
+  }
+
+  async function aiSendQuery() {
+    const input = $('#ai-query-input');
+    if (!input) return;
+    const query = input.value.trim();
+    if (!query || !currentScan || aiLoading) return;
+
+    const model = $('#ai-model')?.value || 'deepseek-coder';
+    const includeAnalysis = $('#ai-include-analysis')?.checked ?? true;
+    const items = selectedIds.size > 0 ? [...selectedIds] : null;
+
+    // Disable UI during request
+    aiLoading = true;
+    input.disabled = true;
+    const sendBtn = $('#ai-send-btn');
+    if (sendBtn) sendBtn.disabled = true;
+    _aiSetStatus('Thinking...');
+
+    // Show user message
+    _aiAddMessage('user', query);
+    input.value = '';
+
+    try {
+      const res = await fetch('/api/ai/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scan_id: currentScan.scan_id,
+          query,
+          item_ids: items,
+          include_analysis: includeAnalysis,
+          model,
+        }),
+      });
+
+      if (res.status === 503) {
+        const err = await res.json();
+        _aiShowNoKeyMessage(err.detail || 'API key not configured');
+        return;
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Request failed' }));
+        _aiAddMessage('error', err.detail || 'AI request failed');
+        return;
+      }
+
+      const data = await res.json();
+      _aiAddMessage('assistant', data.answer, {
+        model: data.model,
+        usage: data.usage,
+      });
+
+      aiChatHistory.push({ query, answer: data.answer, model: data.model });
+    } catch (err) {
+      _aiAddMessage('error', `Network error: ${err.message}`);
+    } finally {
+      aiLoading = false;
+      input.disabled = false;
+      if (sendBtn) sendBtn.disabled = false;
+      _aiSetStatus('');
+      input.focus();
+    }
+  }
+
+  function aiClearChat() {
+    if (!currentScan) return;
+    fetch(`/api/ai/history/${currentScan.scan_id}`, { method: 'DELETE' }).catch(() => {});
+    aiChatHistory = [];
+    const el = $('#ai-chat-messages');
+    if (!el) return;
+    const welcome = el.querySelector('.ai-welcome-message');
+    el.innerHTML = '';
+    if (welcome) el.appendChild(welcome);
+    _aiSetStatus('');
+  }
+
+  function _aiAddMessage(role, content, meta = {}) {
+    const el = $('#ai-chat-messages');
+    if (!el) return;
+
+    const cls = role === 'user' ? 'ai-message-user'
+      : role === 'assistant' ? 'ai-message-assistant'
+      : 'ai-message-error';
+    const label = role === 'user' ? 'You' : role === 'assistant' ? 'AI' : 'Error';
+    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    const rendered = role === 'assistant' ? _aiRenderMarkdown(content) : esc(content);
+
+    let footer = '';
+    if (meta.usage) {
+      const u = meta.usage;
+      footer = `<div class="ai-message-footer">Tokens: ${u.prompt_tokens || 0} in / ${u.completion_tokens || 0} out</div>`;
+    }
+
+    const html = `<div class="ai-message ${cls}">
+      <div class="ai-message-header">
+        <span class="ai-message-role">${label}</span>
+        ${meta.model ? `<span class="ai-message-model">${esc(meta.model)}</span>` : ''}
+        <span class="ai-message-time">${time}</span>
+      </div>
+      <div class="ai-message-content">${rendered}</div>
+      ${footer}
+    </div>`;
+
+    el.insertAdjacentHTML('beforeend', html);
+    el.scrollTop = el.scrollHeight;
+
+    // Highlight code blocks
+    setTimeout(() => {
+      el.querySelectorAll('pre code').forEach(block => {
+        if (window.hljs) hljs.highlightElement(block);
+      });
+    }, 50);
+  }
+
+  function _aiRenderHistory() {
+    const el = $('#ai-chat-messages');
+    if (!el) return;
+    // Keep welcome message, clear rest
+    const welcome = el.querySelector('.ai-welcome-message');
+    el.innerHTML = '';
+    if (welcome) el.appendChild(welcome);
+    // Render stored history
+    for (const entry of aiChatHistory) {
+      _aiAddMessage('user', entry.query);
+      _aiAddMessage('assistant', entry.answer, { model: entry.model });
+    }
+  }
+
+  function _aiRenderMarkdown(text) {
+    if (!text) return '';
+    // Escape HTML first
+    let s = esc(text);
+    // Code blocks: ```lang\n...\n```
+    s = s.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) =>
+      `<pre><code class="language-${lang || 'text'}">${code}</code></pre>`
+    );
+    // Inline code: `...`
+    s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+    // Bold: **...**
+    s = s.replace(/\*\*(.+?)\*\*/g, '<strong style="color:var(--text-primary)">$1</strong>');
+    // Line breaks
+    s = s.replace(/\n/g, '<br>');
+    return s;
+  }
+
+  function _aiShowNoKeyMessage(detail) {
+    const el = $('#ai-chat-messages');
+    if (!el) return;
+    const html = `<div class="ai-no-key-message">
+      <span style="font-size:1.25rem">&#x26A0;</span>
+      <div>
+        <div class="font-medium mb-1">${esc(detail)}</div>
+        <div style="color:var(--text-secondary)">
+          Run: <code>export DEEPSEEK_API_KEY="your-key-here"</code> then restart the server.
+        </div>
+      </div>
+    </div>`;
+    el.insertAdjacentHTML('beforeend', html);
+    el.scrollTop = el.scrollHeight;
+  }
+
+  function _aiSetStatus(text) {
+    const el = $('#ai-status');
+    if (el) el.textContent = text;
+  }
+
+  // ═══════════════════════════════════════════════
   // INIT
   // ═══════════════════════════════════════════════
 
@@ -3358,5 +3544,7 @@ const app = (() => {
     remixResolveDeps, remixAddDep, remixAddAllResolvable,
     // UX Gap Fixes
     onRemixPaletteSearch, toggleRemixScoreBreakdown,
+    // AI Chat
+    aiSendQuery, aiClearChat,
   };
 })();
