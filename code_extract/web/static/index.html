@@ -490,7 +490,7 @@
 
       <!-- ═══ Tab: AI Chat ═══ -->
       <div id="tab-ai" class="tab-panel flex-1 overflow-hidden hidden">
-        <div class="flex flex-col h-full">
+        <div class="flex flex-col h-full min-h-0">
           <!-- Chat header -->
           <div class="px-4 py-3 shrink-0" style="border-bottom: 1px solid var(--border-default)">
             <div class="flex items-center justify-between">
@@ -528,11 +528,12 @@
           </div>
           <!-- Input area -->
           <div class="p-4 shrink-0" style="border-top: 1px solid var(--border-default)">
-            <div class="flex gap-2">
-              <input id="ai-query-input" type="text" placeholder="Ask about your code..."
-                class="glass-input flex-1 px-3 py-2 text-sm"
-                onkeydown="if(event.key==='Enter'&&!event.shiftKey)app.aiSendQuery()">
-              <button id="ai-send-btn" onclick="app.aiSendQuery()" class="neon-btn-filled neon-btn-cyan px-4 text-sm">Send</button>
+            <div class="flex gap-2 items-end">
+              <textarea id="ai-query-input" placeholder="Ask about your code... (Shift+Enter for new line)"
+                class="glass-input flex-1 px-3 py-2 text-sm ai-query-textarea" rows="1"
+                onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();app.aiSendQuery()}"
+                oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px'"></textarea>
+              <button id="ai-send-btn" onclick="app.aiSendQuery()" class="neon-btn-filled neon-btn-cyan px-4 text-sm ai-send-btn">Send</button>
             </div>
             <div class="flex items-center justify-between mt-2">
               <label class="flex items-center gap-1 text-xs" style="color: var(--text-muted)">

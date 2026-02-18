@@ -1701,8 +1701,29 @@ tr.file-group-header {
   white-space: pre-wrap;
   word-break: break-word;
 }
-.ai-message-content pre {
+.ai-code-block-wrap {
+  position: relative;
   margin: 0.5rem 0;
+}
+.ai-copy-btn {
+  position: absolute;
+  top: 0.375rem;
+  right: 0.375rem;
+  padding: 0.125rem 0.5rem;
+  font-size: 0.625rem;
+  color: var(--text-muted);
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 0.25rem;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 1;
+}
+.ai-code-block-wrap:hover .ai-copy-btn { opacity: 1; }
+.ai-copy-btn:hover { color: var(--accent); border-color: rgba(0,240,255,0.3); }
+.ai-message-content pre {
+  margin: 0;
   padding: 0.625rem;
   background: var(--canvas);
   border-radius: 0.375rem;
@@ -1762,6 +1783,96 @@ tr.file-group-header {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.2; }
 }
+/* AI markdown rendering */
+.ai-md-h1 {
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0.75rem 0 0.375rem;
+}
+.ai-md-h2 {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0.625rem 0 0.25rem;
+}
+.ai-md-h3 {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0.5rem 0 0.25rem;
+}
+.ai-md-list {
+  padding-left: 1.25rem;
+  margin: 0.25rem 0;
+  list-style: disc;
+}
+.ai-md-ol {
+  list-style: decimal;
+}
+.ai-md-list li {
+  padding: 0.125rem 0;
+  line-height: 1.5;
+}
+.ai-md-hr {
+  border: none;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  margin: 0.5rem 0;
+}
+
+/* AI message copy button */
+.ai-msg-copy-btn {
+  padding: 0.0625rem 0.375rem;
+  font-size: 0.5625rem;
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 0.2rem;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.ai-message:hover .ai-msg-copy-btn { opacity: 1; }
+.ai-msg-copy-btn:hover { color: var(--accent); border-color: rgba(0,240,255,0.3); }
+
+/* AI typing indicator */
+.ai-typing-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0.75rem 1rem;
+  background: rgba(167,139,250,0.06);
+  border: 1px solid rgba(167,139,250,0.18);
+  border-radius: 0.75rem;
+  animation: aiFadeIn 0.3s ease;
+}
+.ai-typing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  animation: aiTypingBounce 1.4s infinite ease-in-out;
+}
+.ai-typing-dot:nth-child(1) { animation-delay: 0s; }
+.ai-typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.ai-typing-dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes aiTypingBounce {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40% { transform: scale(1); opacity: 1; }
+}
+
+.ai-query-textarea {
+  resize: none;
+  min-height: 38px;
+  max-height: 120px;
+  line-height: 1.5;
+  overflow-y: auto;
+}
+.ai-send-btn {
+  height: 38px;
+  flex-shrink: 0;
+}
+
 .ai-no-key-message {
   display: flex;
   align-items: flex-start;

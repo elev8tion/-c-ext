@@ -3387,6 +3387,10 @@ const app = (() => {
     // Show user message
     _aiAddMessage('user', query);
     input.value = '';
+    input.style.height = 'auto';
+
+    // Show typing indicator
+    _aiShowTyping();
 
     try {
       const res = await fetch('/api/ai/chat', {
@@ -3423,6 +3427,7 @@ const app = (() => {
     } catch (err) {
       _aiAddMessage('error', `Network error: ${err.message}`);
     } finally {
+      _aiHideTyping();
       aiLoading = false;
       input.disabled = false;
       if (sendBtn) sendBtn.disabled = false;
@@ -3461,10 +3466,16 @@ const app = (() => {
       footer = `<div class="ai-message-footer">Tokens: ${u.prompt_tokens || 0} in / ${u.completion_tokens || 0} out</div>`;
     }
 
-    const html = `<div class="ai-message ${cls}">
+    const copyId = 'ai-msg-' + Math.random().toString(36).slice(2, 8);
+    const copyBtn = role === 'assistant'
+      ? `<button class="ai-msg-copy-btn" onclick="app.aiCopyMessage('${copyId}')" title="Copy response">Copy</button>`
+      : '';
+
+    const html = `<div class="ai-message ${cls}" id="${copyId}" data-raw-content="${esc(content).replace(/"/g, '&quot;')}">
       <div class="ai-message-header">
         <span class="ai-message-role">${label}</span>
         ${meta.model ? `<span class="ai-message-model">${esc(meta.model)}</span>` : ''}
+        ${copyBtn}
         <span class="ai-message-time">${time}</span>
       </div>
       <div class="ai-message-content">${rendered}</div>
@@ -3500,17 +3511,74 @@ const app = (() => {
     if (!text) return '';
     // Escape HTML first
     let s = esc(text);
-    // Code blocks: ```lang\n...\n```
-    s = s.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) =>
-      `<pre><code class="language-${lang || 'text'}">${code}</code></pre>`
-    );
+
+    // Code blocks: ```lang\n...\n```  — with copy button
+    s = s.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+      const id = 'ai-code-' + Math.random().toString(36).slice(2, 8);
+      return `<div class="ai-code-block-wrap"><button class="ai-copy-btn" onclick="app.aiCopyCode('${id}')" title="Copy code">&#x2398;</button><pre id="${id}"><code class="language-${lang || 'text'}">${code}</code></pre></div>`;
+    });
+
     // Inline code: `...`
     s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
     // Bold: **...**
     s = s.replace(/\*\*(.+?)\*\*/g, '<strong style="color:var(--text-primary)">$1</strong>');
-    // Line breaks
-    s = s.replace(/\n/g, '<br>');
+    // Headers: ## heading (must be at line start or after <br>)
+    s = s.replace(/(^|<br>)#{3}\s+(.+?)(<br>|$)/g, '$1<div class="ai-md-h3">$2</div>$3');
+    s = s.replace(/(^|<br>)#{2}\s+(.+?)(<br>|$)/g, '$1<div class="ai-md-h2">$2</div>$3');
+    s = s.replace(/(^|<br>)#{1}\s+(.+?)(<br>|$)/g, '$1<div class="ai-md-h1">$2</div>$3');
+    // Horizontal rule: --- or ***
+    s = s.replace(/(^|<br>)([-*]{3,})(<br>|$)/g, '$1<hr class="ai-md-hr">$3');
+
+    // Process lines for lists
+    const lines = s.split('<br>');
+    let out = [];
+    let inUl = false, inOl = false;
+    for (const line of lines) {
+      const ulMatch = line.match(/^[-*]\s+(.+)/);
+      const olMatch = line.match(/^\d+\.\s+(.+)/);
+      if (ulMatch) {
+        if (!inUl) { out.push('<ul class="ai-md-list">'); inUl = true; }
+        out.push(`<li>${ulMatch[1]}</li>`);
+        continue;
+      } else if (inUl) { out.push('</ul>'); inUl = false; }
+      if (olMatch) {
+        if (!inOl) { out.push('<ol class="ai-md-list ai-md-ol">'); inOl = true; }
+        out.push(`<li>${olMatch[1]}</li>`);
+        continue;
+      } else if (inOl) { out.push('</ol>'); inOl = false; }
+      out.push(line);
+    }
+    if (inUl) out.push('</ul>');
+    if (inOl) out.push('</ol>');
+
+    // Rejoin — don't add <br> between list items or after headings
+    s = out.join('<br>');
+    s = s.replace(/<br>(<ul|<ol|<\/ul>|<\/ol>|<div class="ai-md-h)/g, '$1');
+    s = s.replace(/(<\/ul>|<\/ol>|<\/div>)<br>/g, '$1');
     return s;
+  }
+
+  function aiCopyCode(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const text = el.textContent;
+    navigator.clipboard.writeText(text).then(() => {
+      const btn = el.parentElement?.querySelector('.ai-copy-btn');
+      if (btn) { btn.textContent = 'Copied!'; setTimeout(() => btn.innerHTML = '&#x2398;', 1500); }
+    });
+  }
+
+  function aiCopyMessage(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    // Use raw content attribute to get original markdown text
+    const raw = el.getAttribute('data-raw-content') || el.querySelector('.ai-message-content')?.textContent || '';
+    // Decode HTML entities
+    const txt = raw.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+    navigator.clipboard.writeText(txt).then(() => {
+      const btn = el.querySelector('.ai-msg-copy-btn');
+      if (btn) { btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy', 1500); }
+    });
   }
 
   function _aiShowNoKeyMessage(detail) {
@@ -3532,6 +3600,22 @@ const app = (() => {
   function _aiSetStatus(text) {
     const el = $('#ai-status');
     if (el) el.textContent = text;
+  }
+
+  function _aiShowTyping() {
+    const el = $('#ai-chat-messages');
+    if (!el) return;
+    const indicator = document.createElement('div');
+    indicator.id = 'ai-typing';
+    indicator.className = 'ai-typing-indicator';
+    indicator.innerHTML = '<span class="ai-typing-dot"></span><span class="ai-typing-dot"></span><span class="ai-typing-dot"></span>';
+    el.appendChild(indicator);
+    el.scrollTop = el.scrollHeight;
+  }
+
+  function _aiHideTyping() {
+    const el = document.getElementById('ai-typing');
+    if (el) el.remove();
   }
 
   // ═══════════════════════════════════════════════
@@ -3568,5 +3652,6 @@ const app = (() => {
     onRemixPaletteSearch, toggleRemixScoreBreakdown,
     // AI Chat
     aiSendQuery, aiClearChat, aiSaveKey, aiToggleKeyVisibility,
+    aiCopyCode, aiCopyMessage,
   };
 })();
