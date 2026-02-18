@@ -224,6 +224,100 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "parameters": {"type": "object", "properties": {}},
         },
     },
+    # --- Data tools for tabs that were missing coverage ---
+    {
+        "type": "function",
+        "function": {
+            "name": "get_boilerplate_patterns",
+            "description": "Detect boilerplate patterns in selected items and return the template code, detected variables, and pattern info. Use this before generate_boilerplate_code.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "item_names": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Names of items to detect boilerplate patterns for. If empty, uses first 20 items.",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_boilerplate_code",
+            "description": "Generate code from a boilerplate template by substituting variable values. Call get_boilerplate_patterns first to get the template_code and variables.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "template_code": {"type": "string", "description": "Template code with {{variable}} placeholders"},
+                    "variables": {
+                        "type": "object",
+                        "description": "Variable name-value pairs to substitute into the template",
+                        "additionalProperties": {"type": "string"},
+                    },
+                },
+                "required": ["template_code", "variables"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_docs_summary",
+            "description": "Get auto-generated documentation for the scanned codebase. Returns module docs, sections, and summaries.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_tour_steps",
+            "description": "Get the codebase walkthrough tour — a guided sequence of steps explaining the project structure and key components.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_catalog",
+            "description": "Get the component catalog — a categorized inventory of all classes, functions, and components in the scanned project.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "apply_migration_pattern",
+            "description": "Apply a detected migration pattern to a specific code item, transforming its code.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "item_name": {"type": "string", "description": "Name of the item to apply migration to"},
+                    "pattern_id": {"type": "string", "description": "ID of the migration pattern to apply"},
+                },
+                "required": ["item_name", "pattern_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "smart_extract",
+            "description": "Smart extract selected items along with all their transitive dependencies. Creates a downloadable package.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "item_names": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Names of items to extract with dependencies",
+                    },
+                },
+                "required": ["item_names"],
+            },
+        },
+    },
 ]
 
 # Map tool names to handler functions
@@ -243,6 +337,13 @@ _TOOL_HANDLERS: dict[str, str] = {
     "run_comparison": "handle_run_comparison",
     "extract_code": "handle_extract_code",
     "detect_migrations": "handle_detect_migrations",
+    "get_boilerplate_patterns": "handle_get_boilerplate_patterns",
+    "generate_boilerplate_code": "handle_generate_boilerplate_code",
+    "get_docs_summary": "handle_get_docs_summary",
+    "get_tour_steps": "handle_get_tour_steps",
+    "get_catalog": "handle_get_catalog",
+    "apply_migration_pattern": "handle_apply_migration_pattern",
+    "smart_extract": "handle_smart_extract",
 }
 
 
@@ -592,6 +693,175 @@ def handle_detect_migrations(scan_id: str, args: dict) -> tuple[str, list[dict]]
         {"type": "click", "function": "detectMigrations"},
     ]
     return "Detecting database migrations.", actions
+
+
+# ── Boilerplate data tools ────────────────────────────────────────────
+
+def handle_get_boilerplate_patterns(scan_id: str, args: dict) -> tuple[str, list[dict]]:
+    """Detect boilerplate patterns and return template + pattern data."""
+    from code_extract.web.state import state
+    from code_extract.analysis.boilerplate import detect_patterns, generate_template
+
+    blocks = state.get_blocks_for_scan(scan_id)
+    if not blocks:
+        return json.dumps({"error": "No blocks extracted"}), []
+
+    names = args.get("item_names", [])
+    if names:
+        resolved = _resolve_items(scan_id, names)
+        item_ids = [r["item_id"] for r in resolved]
+    else:
+        item_ids = list(blocks.keys())[:20]
+
+    selected = [blocks[iid] for iid in item_ids if iid in blocks]
+    if not selected:
+        return json.dumps({"error": "No matching items found"}), []
+
+    template_name = args.get("template_name", "template")
+    template = generate_template(selected, template_name)
+    patterns = detect_patterns(blocks)
+
+    result = {
+        "template_code": template.get("source_code", "")[:2000],
+        "variables": template.get("variables", []),
+        "language": template.get("config", {}).get("language", "text"),
+        "patterns_found": len(patterns),
+        "patterns": [
+            {"directory": p.get("directory", ""),
+             "block_type": p.get("block_type", ""),
+             "count": p.get("count", 0)}
+            for p in patterns[:5]
+        ],
+    }
+    return json.dumps(result), [{"type": "navigate", "tab": "boilerplate"}]
+
+
+def handle_generate_boilerplate_code(scan_id: str, args: dict) -> tuple[str, list[dict]]:
+    """Generate code from a boilerplate template with variable substitution."""
+    from code_extract.analysis.boilerplate import apply_template
+
+    template_code = args.get("template_code", "")
+    variables = args.get("variables", {})
+
+    if not template_code:
+        return json.dumps({"error": "template_code is required"}), []
+
+    generated = apply_template(template_code, variables)
+    return json.dumps({"generated_code": generated[:3000]}), []
+
+
+# ── Docs / Tour / Catalog data tools ──────────────────────────────────
+
+def handle_get_docs_summary(scan_id: str, args: dict) -> tuple[str, list[dict]]:
+    """Get auto-generated documentation summary."""
+    from code_extract.web.state import state
+
+    docs = state.get_analysis(scan_id, "docs")
+    if not docs:
+        return json.dumps({
+            "error": "Documentation not generated yet. Navigate to the docs tab to generate.",
+        }), [{"type": "navigate", "tab": "docs"}]
+
+    modules = docs.get("modules", [])
+    summary = {
+        "total_modules": len(modules),
+        "modules": [
+            {"name": m.get("name", ""), "item_count": len(m.get("items", []))}
+            for m in modules[:10]
+        ],
+    }
+    return json.dumps(summary), []
+
+
+def handle_get_tour_steps(scan_id: str, args: dict) -> tuple[str, list[dict]]:
+    """Get codebase walkthrough tour steps."""
+    from code_extract.web.state import state
+
+    tour = state.get_analysis(scan_id, "tour")
+    if not tour:
+        return json.dumps({
+            "error": "Tour not generated yet. Navigate to the tour tab to generate.",
+        }), [{"type": "navigate", "tab": "tour"}]
+
+    steps = tour.get("steps", [])
+    summary = {
+        "total_steps": len(steps),
+        "steps": [
+            {"title": s.get("title", ""),
+             "description": s.get("description", "")[:200]}
+            for s in steps[:10]
+        ],
+    }
+    return json.dumps(summary), []
+
+
+def handle_get_catalog(scan_id: str, args: dict) -> tuple[str, list[dict]]:
+    """Get component catalog."""
+    from code_extract.web.state import state
+
+    catalog = state.get_analysis(scan_id, "catalog")
+    if not catalog:
+        return json.dumps({
+            "error": "Catalog not built yet. Navigate to the catalog tab to build.",
+        }), [{"type": "navigate", "tab": "catalog"}]
+
+    items = catalog if isinstance(catalog, list) else []
+    summary = {
+        "total_items": len(items),
+        "items": [
+            {"name": i.get("name", ""),
+             "type": i.get("type", ""),
+             "language": i.get("language", "")}
+            for i in items[:15]
+        ],
+    }
+    return json.dumps(summary), []
+
+
+# ── Migration apply + smart extract ───────────────────────────────────
+
+def handle_apply_migration_pattern(scan_id: str, args: dict) -> tuple[str, list[dict]]:
+    """Apply a migration pattern to a specific item."""
+    from code_extract.web.state import state
+    from code_extract.analysis.migration import apply_migration
+
+    name = args.get("item_name", "")
+    pattern_id = args.get("pattern_id", "")
+
+    blocks = state.get_blocks_for_scan(scan_id)
+    if not blocks:
+        return json.dumps({"error": "No blocks extracted"}), []
+
+    match = _find_item(blocks, name)
+    if not match:
+        return json.dumps({"error": f"Item '{name}' not found"}), []
+
+    item_id, block = match
+    try:
+        result = apply_migration(block, pattern_id)
+        return json.dumps({
+            "item": block.item.qualified_name,
+            "pattern_id": pattern_id,
+            "result": result if isinstance(result, dict) else {"transformed": str(result)[:2000]},
+        }), [{"type": "navigate", "tab": "migration"}]
+    except Exception as e:
+        return json.dumps({"error": f"Migration failed: {e}"}), []
+
+
+def handle_smart_extract(scan_id: str, args: dict) -> tuple[str, list[dict]]:
+    """Smart extract items with transitive dependencies."""
+    names = args.get("item_names", [])
+    resolved = _resolve_items(scan_id, names)
+    if not resolved:
+        return f"Could not find items: {', '.join(names)}", []
+
+    item_ids = [r["item_id"] for r in resolved]
+    item_names = [r["name"] for r in resolved]
+    actions = [
+        {"type": "select", "item_ids": item_ids, "item_names": item_names},
+        {"type": "click", "function": "smartExtract"},
+    ]
+    return f"Smart extracting {len(resolved)} item(s) with dependencies: {', '.join(item_names)}", actions
 
 
 # ── Dispatcher ──────────────────────────────────────────────────────────

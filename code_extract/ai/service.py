@@ -129,6 +129,8 @@ class DeepSeekService:
         query: str,
         scan_id: str,
         history: list[dict[str, str]],
+        code_context: list[dict[str, Any]] | None = None,
+        analysis_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Run an agentic chat with tool-calling loop.
 
@@ -136,13 +138,18 @@ class DeepSeekService:
             query: User's natural language request.
             scan_id: Active scan session ID.
             history: Last N conversation turns as {role, content} dicts.
+            code_context: Code blocks from the scan (same as chat endpoint).
+            analysis_context: Analysis data (health, deps, dead_code).
 
         Returns:
             {answer, actions, model, usage, history_update}
         """
         from .tools import TOOL_DEFINITIONS, execute_tool
 
-        system_prompt = self._build_agent_system_prompt()
+        system_prompt = self._build_agent_system_prompt(
+            code_context=code_context,
+            analysis_context=analysis_context,
+        )
         messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
         messages.extend(history)
         messages.append({"role": "user", "content": query})
@@ -228,26 +235,71 @@ class DeepSeekService:
             ],
         }
 
-    def _build_agent_system_prompt(self) -> str:
-        """System prompt for the agentic copilot."""
-        return (
-            "You are an AI copilot integrated with code-extract, a code analysis and extraction tool.\n"
-            "You can answer questions about the scanned codebase AND take actions in the UI.\n\n"
-            "## Available capabilities:\n"
+    def _build_agent_system_prompt(
+        self,
+        code_context: list[dict[str, Any]] | None = None,
+        analysis_context: dict[str, Any] | None = None,
+    ) -> str:
+        """System prompt for the agentic copilot with code and analysis context."""
+        parts = [
+            "You are an AI copilot integrated with code-extract, a code analysis and extraction tool.",
+            "You can answer questions about the scanned codebase AND take actions in the UI.",
+            "You have access to the code context and analysis data below.",
+            "Provide specific, actionable insights about the code.",
+            "Reference actual code when possible.",
+            "",
+            "## Available capabilities:",
             "- **Data queries**: Search items, get source code, health scores, architecture info, "
-            "dead code, and dependencies.\n"
+            "dead code, dependencies, docs summaries, tour steps, and component catalog.",
             "- **UI navigation**: Switch between tabs (scan, catalog, architecture, health, docs, "
-            "deadcode, tour, clone, boilerplate, migration, remix).\n"
-            "- **Workflows**: Clone items, add to remix board, build remix projects, detect "
-            "boilerplate, run comparisons, extract code, detect migrations.\n\n"
-            "## Guidelines:\n"
-            "- Use data tools to gather information before answering questions.\n"
-            "- Use UI action tools when the user wants to navigate or perform operations.\n"
-            "- For multi-step workflows (like cloning), use the appropriate workflow tool.\n"
-            "- Be concise but helpful in your responses.\n"
-            "- If an item name is ambiguous, search first to find the exact match.\n"
-            "- When reporting data, summarize the key findings clearly.\n"
-        )
+            "deadcode, tour, clone, boilerplate, migration, remix).",
+            "- **Boilerplate**: Detect boilerplate patterns, get template code with variables, "
+            "and generate new code from templates by filling in variables.",
+            "- **Workflows**: Clone items, add to remix board, build remix projects, "
+            "run comparisons, smart-extract code with dependencies, apply migration patterns.",
+            "",
+            "## Guidelines:",
+            "- Use data tools to gather information before answering questions.",
+            "- Use UI action tools when the user wants to navigate or perform operations.",
+            "- For multi-step workflows (like cloning), use the appropriate workflow tool.",
+            "- Be concise but helpful in your responses.",
+            "- If an item name is ambiguous, search first to find the exact match.",
+            "- When reporting data, summarize the key findings clearly.",
+        ]
+
+        # Embed code context (same format as chat system prompt)
+        if code_context:
+            parts.append("\n## Code Context:")
+            for i, block in enumerate(code_context[:MAX_CODE_BLOCKS]):
+                name = block.get("name", "Unknown")
+                btype = block.get("type", "Unknown")
+                lang = block.get("language", "text")
+                fpath = block.get("file", "Unknown")
+                code = block.get("code", "")[:MAX_CODE_CHARS]
+                parts.append(
+                    f"\n### {i + 1}. {name}\n"
+                    f"Type: {btype} | Language: {lang} | File: {fpath}\n"
+                    f"```{lang}\n{code}\n```"
+                )
+
+        # Embed analysis context (same format as chat system prompt)
+        if analysis_context:
+            parts.append("\n## Analysis Context:")
+            if "health" in analysis_context:
+                health = analysis_context["health"]
+                score = getattr(health, "score", None) or (health.get("score") if isinstance(health, dict) else "N/A")
+                parts.append(f"Health Score: {score}/100")
+            if "dependencies" in analysis_context:
+                dep = analysis_context["dependencies"]
+                n_nodes = len(getattr(dep, "nodes", {})) if hasattr(dep, "nodes") else (len(dep) if isinstance(dep, (list, dict)) else 0)
+                n_edges = len(getattr(dep, "edges", [])) if hasattr(dep, "edges") else 0
+                parts.append(f"Dependencies: {n_nodes} nodes, {n_edges} edges")
+            if "dead_code" in analysis_context:
+                dc = analysis_context["dead_code"]
+                count = len(dc) if isinstance(dc, (list, dict)) else 0
+                parts.append(f"Potential Dead Code: {count} items")
+
+        return "\n".join(parts)
 
     async def close(self):
         """Clean up the HTTP client."""

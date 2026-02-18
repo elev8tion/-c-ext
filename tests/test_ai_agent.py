@@ -85,7 +85,7 @@ def _setup_scan_with_blocks(blocks_dict, scan_id="test-scan"):
 
 class TestToolDefinitions:
     def test_tool_count(self):
-        assert len(TOOL_DEFINITIONS) == 15
+        assert len(TOOL_DEFINITIONS) == 22
 
     def test_all_tools_have_function_schema(self):
         for tool in TOOL_DEFINITIONS:

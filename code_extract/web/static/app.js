@@ -3746,7 +3746,11 @@ const app = (() => {
     const input = $('#ai-agent-input');
     if (!input) return;
     const query = input.value.trim();
-    if (!query || !currentScan || aiAgentLoading) return;
+    if (!query || aiAgentLoading) return;
+    if (!currentScan) {
+      _aiWidgetAddMessage('error', 'Scan a project first, then ask questions.');
+      return;
+    }
 
     aiAgentLoading = true;
     input.disabled = true;
@@ -3768,6 +3772,7 @@ const app = (() => {
         body: JSON.stringify({
           scan_id: currentScan.scan_id,
           query,
+          item_ids: selectedIds.size > 0 ? [...selectedIds] : null,
           model: $('#ai-model')?.value || 'deepseek-coder',
           api_key: $('#ai-api-key')?.value || '',
         }),

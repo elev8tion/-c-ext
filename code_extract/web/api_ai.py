@@ -25,6 +25,7 @@ class ChatRequest(BaseModel):
 class AgentChatRequest(BaseModel):
     scan_id: str
     query: str
+    item_ids: Optional[list[str]] = None
     model: Optional[str] = None
     api_key: Optional[str] = None
 
@@ -166,6 +167,37 @@ async def agent_chat_endpoint(req: AgentChatRequest):
             detail="DeepSeek API key not configured. Set the DEEPSEEK_API_KEY environment variable.",
         )
 
+    # Build code context (same as /api/ai/chat)
+    blocks = state.get_blocks_for_scan(req.scan_id)
+    code_context = []
+    if blocks:
+        items_to_include = req.item_ids or list(blocks.keys())[:20]
+        for item_id in items_to_include:
+            block = blocks.get(item_id)
+            if not block:
+                continue
+            limit = 5000 if req.item_ids else 2000
+            code_context.append({
+                "item_id": item_id,
+                "name": block.item.qualified_name,
+                "type": block.item.block_type.value,
+                "language": block.item.language.value,
+                "file": str(block.item.file_path),
+                "code": block.source_code[:limit],
+            })
+
+    # Build analysis context (same as /api/ai/chat)
+    analysis_context = {}
+    health = state.get_analysis(req.scan_id, "health")
+    if health:
+        analysis_context["health"] = health
+    graph = state.get_analysis(req.scan_id, "graph")
+    if graph:
+        analysis_context["dependencies"] = graph
+    dead = state.get_analysis(req.scan_id, "dead_code")
+    if dead:
+        analysis_context["dead_code"] = dead
+
     # Load agent conversation history (last N turns)
     history = state.get_analysis(req.scan_id, "agent_history") or []
 
@@ -175,6 +207,8 @@ async def agent_chat_endpoint(req: AgentChatRequest):
             query=req.query,
             scan_id=req.scan_id,
             history=history,
+            code_context=code_context,
+            analysis_context=analysis_context or None,
         )
     except Exception as e:
         raise HTTPException(500, detail=f"AI agent error: {e}")
