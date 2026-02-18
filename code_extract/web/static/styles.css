@@ -994,7 +994,9 @@ tr.file-group-header {
 .remix-canvas.drag-over {
   outline: 2px dashed var(--accent);
   outline-offset: -4px;
-  background-color: rgba(0,240,255,0.02);
+  background-color: rgba(0,240,255,0.08);
+  border-color: var(--neon-cyan, var(--accent));
+  box-shadow: inset 0 0 20px rgba(0,240,255,0.05);
 }
 
 .remix-canvas-placeholder {
@@ -1199,4 +1201,449 @@ tr.file-group-header {
 }
 .remix-conflict-row input {
   flex: 1;
+}
+
+/* ═══ Remix Score Badge ═══ */
+
+.remix-score-badge {
+  margin-left: auto;
+  font-weight: 700;
+  font-size: 0.8125rem;
+  padding: 0.125rem 0.625rem;
+  border-radius: 999px;
+  letter-spacing: 0.025em;
+}
+.remix-score-badge.grade-a { background: rgba(0,255,157,0.15); color: var(--success); }
+.remix-score-badge.grade-b { background: rgba(0,240,255,0.15); color: var(--accent); }
+.remix-score-badge.grade-c { background: rgba(255,184,0,0.15); color: var(--warning); }
+.remix-score-badge.grade-d { background: rgba(255,51,102,0.15); color: var(--error); }
+.remix-score-badge.grade-f { background: rgba(255,51,102,0.25); color: var(--error); }
+
+/* ═══ Remix Suggestions Panel ═══ */
+
+.remix-suggestions-panel {
+  padding: 0.5rem 0.75rem;
+  background: rgba(0,240,255,0.03);
+  border-bottom: 1px solid rgba(0,240,255,0.15);
+  flex-shrink: 0;
+  max-height: 140px;
+  overflow-y: auto;
+  position: relative;
+}
+.remix-suggestions-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.375rem;
+}
+.remix-suggestions-header span {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+.remix-suggestions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.remix-suggestion-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.375rem;
+  border-radius: 0.25rem;
+  font-size: 0.6875rem;
+  background: var(--glass-bg);
+  border: 1px solid var(--border-default);
+  transition: border-color 0.15s;
+}
+.remix-suggestion-item:hover {
+  border-color: var(--border-hover);
+}
+.remix-suggestion-name {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.remix-suggestion-reason {
+  font-size: 0.5625rem;
+  color: var(--text-muted);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.remix-suggestion-add {
+  background: none;
+  border: 1px solid rgba(0,240,255,0.3);
+  color: var(--accent);
+  padding: 0.0625rem 0.375rem;
+  border-radius: 999px;
+  font-size: 0.5625rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.remix-suggestion-add:hover {
+  background: var(--accent-dimmed);
+}
+
+/* ═══ Remix Deps Panel ═══ */
+
+.remix-deps-panel {
+  padding: 0.5rem 0.75rem;
+  background: rgba(0,240,255,0.02);
+  border-top: 1px solid rgba(0,240,255,0.1);
+  flex-shrink: 0;
+  max-height: 140px;
+  overflow-y: auto;
+}
+.remix-deps-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.375rem;
+}
+.remix-deps-header span {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+.remix-dep-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+  font-size: 0.6875rem;
+}
+.remix-dep-name {
+  font-weight: 500;
+  color: var(--text-primary);
+  min-width: 100px;
+}
+.remix-dep-count {
+  font-size: 0.5625rem;
+  color: var(--text-muted);
+  flex: 1;
+}
+.remix-dep-add {
+  background: none;
+  border: 1px solid rgba(0,240,255,0.3);
+  color: var(--accent);
+  padding: 0.0625rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.5625rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.remix-dep-add:hover {
+  background: var(--accent-dimmed);
+}
+.remix-dep-unresolvable {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* ═══ Remix Template Items ═══ */
+
+.remix-template-item {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.375rem 0.5rem;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  transition: background 0.15s;
+  position: relative;
+}
+.remix-template-item:hover {
+  background: var(--glass-bg-hover);
+}
+.remix-template-info {
+  flex: 1;
+  min-width: 0;
+}
+.remix-template-name {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.remix-template-meta {
+  font-size: 0.5625rem;
+  color: var(--text-muted);
+}
+.remix-template-desc {
+  font-size: 0.5625rem;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.remix-template-delete {
+  background: none;
+  border: none;
+  color: var(--error);
+  font-size: 0.75rem;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+  padding: 0 0.25rem;
+}
+.remix-template-item:hover .remix-template-delete {
+  opacity: 0.6;
+}
+.remix-template-delete:hover {
+  opacity: 1 !important;
+}
+
+/* ═══ Remix Live Preview ═══ */
+
+.remix-preview-tree {
+  padding: 0.5rem;
+}
+.remix-preview-file {
+  margin-bottom: 0.5rem;
+  border: 1px solid var(--border-default);
+  border-radius: 0.375rem;
+  overflow: hidden;
+}
+.remix-preview-file-header {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.375rem 0.5rem;
+  background: var(--glass-bg);
+  cursor: pointer;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  transition: background 0.15s;
+}
+.remix-preview-file-header:hover {
+  background: var(--glass-bg-hover);
+}
+.remix-preview-file-path {
+  color: var(--text-secondary);
+  font-size: 0.625rem;
+}
+.remix-preview-file-code {
+  display: none;
+  background: var(--canvas);
+  padding: 0.5rem;
+  overflow: auto;
+  max-height: 300px;
+  font-size: 0.6875rem;
+}
+.remix-preview-file.expanded .remix-preview-file-code {
+  display: block;
+}
+#remix-preview-toggle.active {
+  background: var(--accent-dimmed);
+  border-color: rgba(0,240,255,0.4);
+}
+
+/* ═══ Remix Card Popover (Gap 1) ═══ */
+
+.remix-card-popover {
+  position: absolute;
+  z-index: 60;
+  max-width: 480px;
+  max-height: 360px;
+  overflow-y: auto;
+  background: rgba(12,13,18,0.95);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(0,240,255,0.25);
+  border-radius: 10px;
+  padding: 0.75rem;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5), 0 0 15px rgba(0,240,255,0.08);
+}
+.remix-card-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+.remix-card-popover-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.125rem;
+  cursor: pointer;
+  padding: 0 0.25rem;
+}
+.remix-card-popover-close:hover {
+  color: var(--text-primary);
+}
+.remix-card-popover pre {
+  background: var(--canvas);
+  border-radius: 0.375rem;
+  padding: 0.5rem;
+  overflow: auto;
+  max-height: 240px;
+  font-size: 0.6875rem;
+  margin: 0;
+}
+
+/* ═══ Validation Bar Hover + Chevron (Gap 3) ═══ */
+
+.remix-validation-bar:hover {
+  filter: brightness(1.15);
+}
+.remix-validation-chevron {
+  display: inline-block;
+  transition: transform 0.2s;
+  font-size: 0.75rem;
+  margin-left: 0.25rem;
+}
+
+/* ═══ Stale Badge (Gap 2) ═══ */
+
+.remix-stale-badge {
+  font-size: 0.5625rem;
+  color: var(--warning);
+  opacity: 0.8;
+  margin-left: 0.375rem;
+}
+
+/* ═══ Canvas Min-Height (Gap 5) ═══ */
+
+#remix-canvas {
+  min-height: 180px;
+}
+
+/* ═══ Empty State Arrow (Gap 7) ═══ */
+
+.remix-empty-arrow {
+  animation: remix-pulse 2s ease-in-out infinite;
+  margin-bottom: 0.75rem;
+}
+@keyframes remix-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.6; }
+}
+
+/* ═══ Palette Chevron (Gap 8) ═══ */
+
+.remix-palette-chevron {
+  display: inline-block;
+  transition: transform 0.2s;
+  font-size: 0.625rem;
+  margin-right: 0.25rem;
+}
+.remix-palette-project:not(.expanded) .remix-palette-chevron {
+  transform: rotate(-90deg);
+}
+
+/* ═══ Preview File Chevron (Gap 12) ═══ */
+
+.remix-preview-chevron {
+  display: inline-block;
+  transition: transform 0.2s;
+  font-size: 0.625rem;
+  margin-right: 0.125rem;
+}
+.remix-preview-file.expanded .remix-preview-chevron {
+  transform: rotate(90deg);
+}
+
+/* ═══ Palette Search (Gap 9) ═══ */
+
+.remix-palette-search {
+  width: 100%;
+  background: var(--glass-bg);
+  border: none;
+  border-bottom: 1px solid var(--border-default);
+  color: var(--text-primary);
+  padding: 0.375rem 0.625rem;
+  font-size: 0.6875rem;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.remix-palette-search:focus {
+  border-color: var(--accent);
+  box-shadow: 0 1px 0 0 rgba(0,240,255,0.15);
+}
+.remix-palette-search::placeholder {
+  color: var(--text-muted);
+}
+
+/* ═══ Suggestion Countdown (Gap 4) ═══ */
+
+.remix-suggestion-countdown {
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+  margin-top: 0.375rem;
+  animation: deplete 30s linear forwards;
+}
+.remix-suggestion-countdown.paused {
+  animation-play-state: paused;
+}
+@keyframes deplete {
+  from { width: 100%; }
+  to { width: 0%; }
+}
+
+/* ═══ Controls Bar Grouping (Gap 11) ═══ */
+
+.remix-btn-group {
+  display: flex;
+  gap: 0.25rem;
+}
+.remix-btn-group + .remix-btn-group {
+  margin-left: 0.25rem;
+  padding-left: 0.5rem;
+  border-left: 1px solid var(--border-default);
+}
+
+/* ═══ Danger Button (Gap 11) ═══ */
+
+.neon-btn-danger {
+  color: var(--error);
+  border-color: rgba(255,51,102,0.3);
+}
+.neon-btn-danger:hover {
+  background: rgba(255,51,102,0.1);
+  box-shadow: 0 0 20px rgba(255,51,102,0.15), 0 0 40px rgba(255,51,102,0.05);
+}
+
+/* ═══ Template Unmatched Banner (Gap 10) ═══ */
+
+.remix-unmatched-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(255,184,0,0.04);
+  border-bottom: 1px solid rgba(255,184,0,0.15);
+  font-size: 0.6875rem;
+  color: var(--warning);
+  flex-shrink: 0;
+}
+.remix-unmatched-banner button {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.875rem;
+  padding: 0;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* ═══ Score Breakdown (Gap 13) ═══ */
+
+.remix-score-breakdown {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.25rem 0.75rem 0.375rem;
+  font-size: 0.625rem;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-default);
+  background: var(--canvas-raised);
+  flex-shrink: 0;
+}
+.remix-score-breakdown span {
+  white-space: nowrap;
 }

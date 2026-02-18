@@ -10,6 +10,7 @@ from code_extract.analysis.remix import (
     RemixSource, merge_blocks, detect_naming_conflicts, apply_conflict_resolutions,
     validate_language_coherence, validate_orphaned_methods, validate_sql_isolation,
     validate_unresolved_refs, validate_circular_deps, validate_remix,
+    compute_compatibility_score, find_resolvable_deps, preview_remix,
     ValidationIssue, ValidationResult,
 )
 
@@ -304,3 +305,160 @@ class TestValidateRemix:
         assert result.is_buildable is True
         assert len(result.conflicts) == 1
         assert result.conflicts[0]["name"] == "Config"
+
+
+# ── compute_compatibility_score ─────────────────────────────
+
+class TestCompatibilityScore:
+    def test_perfect_score(self):
+        b1 = _make_block("foo", lang=Language.PYTHON)
+        b2 = _make_block("bar", lang=Language.PYTHON)
+        merged = {"s1::id1": b1, "s1::id2": b2}
+        origin = {"s1::id1": "proj-a", "s1::id2": "proj-a"}
+
+        result = compute_compatibility_score(merged, origin)
+        assert result["score"] == 100
+        assert result["grade"] == "A"
+        assert result["breakdown"]["language"] == 0
+
+    def test_language_penalty(self):
+        b1 = _make_block("foo", lang=Language.PYTHON)
+        b2 = _make_block("bar", lang=Language.DART)
+        merged = {"s1::id1": b1, "s2::id2": b2}
+        origin = {"s1::id1": "proj-a", "s2::id2": "proj-b"}
+
+        result = compute_compatibility_score(merged, origin)
+        assert result["breakdown"]["language"] == 30
+        assert result["score"] <= 70
+
+    def test_unresolved_refs_penalty(self):
+        b = _make_block("App", type_references=["MissingA", "MissingB"])
+        merged = {"s1::id1": b}
+        origin = {"s1::id1": "proj-a"}
+
+        result = compute_compatibility_score(merged, origin)
+        assert result["breakdown"]["deps"] == 25.0  # all refs unresolved
+        assert result["score"] == 75
+
+    def test_conflicts_penalty(self):
+        b1 = _make_block("Config", lang=Language.PYTHON)
+        b2 = _make_block("Config", lang=Language.PYTHON)
+        merged = {"s1::id1": b1, "s2::id2": b2}
+        origin = {"s1::id1": "proj-a", "s2::id2": "proj-b"}
+
+        result = compute_compatibility_score(merged, origin)
+        assert result["breakdown"]["conflicts"] == 5
+        assert result["score"] == 95
+
+    def test_orphans_penalty(self):
+        b = _make_block("do_stuff", btype=CodeBlockType.METHOD, parent="MissingClass")
+        merged = {"s1::id1": b}
+        origin = {"s1::id1": "proj-a"}
+
+        result = compute_compatibility_score(merged, origin)
+        assert result["breakdown"]["orphans"] == 3
+        assert result["score"] == 97
+
+    def test_grade_boundaries(self):
+        """Verify grade boundaries: A>=90, B>=75, C>=60, D>=40, F<40."""
+        b1 = _make_block("foo", lang=Language.PYTHON)
+        merged = {"s1::id1": b1}
+        origin = {"s1::id1": "proj-a"}
+        # Clean score = 100 → A
+        result = compute_compatibility_score(merged, origin)
+        assert result["grade"] == "A"
+
+        # Force score into B range by having some unresolved refs
+        b2 = _make_block("bar", type_references=["X"])
+        merged2 = {"s1::id1": b2}
+        origin2 = {"s1::id1": "proj-a"}
+        result2 = compute_compatibility_score(merged2, origin2)
+        # 100 - 25 = 75 → B
+        assert result2["grade"] == "B"
+
+
+# ── find_resolvable_deps ────────────────────────────────────
+
+class TestFindResolvableDeps:
+    def test_all_resolved_empty(self):
+        b1 = _make_block("Config", btype=CodeBlockType.CLASS)
+        b2 = _make_block("App", type_references=["Config"])
+        merged = {"s1::id1": b1, "s1::id2": b2}
+        palette = []
+
+        result = find_resolvable_deps(merged, palette)
+        assert result == []
+
+    def test_unresolved_with_candidate(self):
+        b = _make_block("App", type_references=["Config"])
+        merged = {"s1::id1": b}
+        palette = [
+            {"scan_id": "s2", "item_id": "id2", "name": "Config", "type": "class",
+             "language": "python", "parent": None, "project_name": "proj-b"},
+        ]
+
+        result = find_resolvable_deps(merged, palette)
+        assert len(result) == 1
+        assert result[0]["unresolved_ref"] == "Config"
+        assert len(result[0]["candidates"]) == 1
+        assert result[0]["candidates"][0]["name"] == "Config"
+
+    def test_unresolved_no_candidate(self):
+        b = _make_block("App", type_references=["MissingType"])
+        merged = {"s1::id1": b}
+        palette = [
+            {"scan_id": "s2", "item_id": "id2", "name": "Other", "type": "class",
+             "language": "python", "parent": None, "project_name": "proj-b"},
+        ]
+
+        result = find_resolvable_deps(merged, palette)
+        assert len(result) == 1
+        assert result[0]["unresolved_ref"] == "MissingType"
+        assert len(result[0]["candidates"]) == 0
+
+    def test_multiple_candidates(self):
+        b = _make_block("App", type_references=["Config"])
+        merged = {"s1::id1": b}
+        palette = [
+            {"scan_id": "s2", "item_id": "id2", "name": "Config", "type": "class",
+             "language": "python", "parent": None, "project_name": "proj-b"},
+            {"scan_id": "s3", "item_id": "id3", "name": "Config", "type": "class",
+             "language": "python", "parent": None, "project_name": "proj-c"},
+        ]
+
+        result = find_resolvable_deps(merged, palette)
+        assert len(result) == 1
+        assert len(result[0]["candidates"]) == 2
+
+
+# ── preview_remix ────────────────────────────────────────────
+
+class TestPreviewRemix:
+    def test_single_block_preview(self):
+        b = _make_block("helper", source="def helper(): pass", lang=Language.PYTHON)
+        merged = {"s1::id1": b}
+
+        result = preview_remix(merged)
+        assert result["file_count"] == 1
+        assert result["primary_language"] == "python"
+        assert len(result["files"]) == 1
+        assert result["files"][0]["path"].startswith("src/")
+        assert "helper" in result["files"][0]["content"]
+
+    def test_multiple_blocks(self):
+        b1 = _make_block("alpha", source="def alpha(): pass", lang=Language.PYTHON)
+        b2 = _make_block("beta", source="def beta(): pass", lang=Language.PYTHON)
+        merged = {"s1::id1": b1, "s1::id2": b2}
+
+        result = preview_remix(merged)
+        assert result["file_count"] == 2
+        assert result["primary_language"] == "python"
+
+    def test_preview_with_resolutions(self):
+        b = _make_block("Config", source="class Config:\n    pass", lang=Language.PYTHON,
+                        btype=CodeBlockType.CLASS)
+        merged = {"s1::id1": b}
+
+        result = preview_remix(merged, resolutions={"s1::id1": "AppConfig"})
+        assert result["file_count"] == 1
+        assert "AppConfig" in result["files"][0]["content"]

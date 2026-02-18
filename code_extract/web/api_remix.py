@@ -44,6 +44,27 @@ class RemixBuildRequest(BaseModel):
     include_deps: bool = False
 
 
+class RemixResolveRequest(BaseModel):
+    canvas_items: list[RemixCanvasItem]
+
+
+class RemixTemplateItem(BaseModel):
+    name: str
+    type: str
+    language: str
+    parent: str | None = None
+
+
+class RemixTemplateMatchRequest(BaseModel):
+    items: list[RemixTemplateItem]
+
+
+class RemixPreviewRequest(BaseModel):
+    canvas_items: list[RemixCanvasItem]
+    resolutions: list[RemixConflictResolution] = []
+    project_name: str = "remix-package"
+
+
 # ── GET /api/remix/palette ───────────────────────────────────
 
 @router.get("/palette")
@@ -53,16 +74,25 @@ async def remix_palette():
     for scan_id, scan in state.scans.items():
         if scan.status != "ready":
             continue
+        blocks = state.get_blocks_for_scan(scan_id)
         items = []
         for item in scan.items:
             item_id = f"{item.file_path}:{item.line_number}"
-            items.append({
+            item_data = {
                 "item_id": item_id,
                 "name": item.name,
                 "type": item.block_type.value,
                 "language": item.language.value,
                 "parent": item.parent,
-            })
+            }
+            # Enrich with type_references and imports from extracted blocks
+            if blocks and item_id in blocks:
+                item_data["type_references"] = blocks[item_id].type_references
+                item_data["imports"] = blocks[item_id].imports
+            else:
+                item_data["type_references"] = []
+                item_data["imports"] = []
+            items.append(item_data)
         palette.append({
             "scan_id": scan_id,
             "project_name": basename(scan.source_dir) if scan.source_dir else scan_id,
@@ -78,7 +108,7 @@ async def remix_palette():
 async def validate_remix_endpoint(req: RemixValidateRequest):
     """Run compatibility validation on the canvas items."""
     from code_extract.analysis.remix import (
-        RemixSource, merge_blocks, validate_remix,
+        RemixSource, merge_blocks, validate_remix, compute_compatibility_score,
     )
 
     sources, filtered_stores = _resolve_canvas_items(req.canvas_items)
@@ -86,7 +116,7 @@ async def validate_remix_endpoint(req: RemixValidateRequest):
 
     result = validate_remix(merged, origin_map, full=req.full)
 
-    return {
+    response = {
         "errors": [
             {"severity": i.severity, "rule": i.rule, "message": i.message, "items": i.items}
             for i in result.errors
@@ -99,6 +129,15 @@ async def validate_remix_endpoint(req: RemixValidateRequest):
         "is_buildable": result.is_buildable,
         "total_items": len(merged),
     }
+
+    # Include compatibility score on full validation
+    if req.full and merged:
+        score_data = compute_compatibility_score(merged, origin_map)
+        response["score"] = score_data["score"]
+        response["grade"] = score_data["grade"]
+        response["score_breakdown"] = score_data["breakdown"]
+
+    return response
 
 
 # ── POST /api/remix/detect-conflicts ─────────────────────────
@@ -121,6 +160,98 @@ async def detect_conflicts(req: RemixDetectRequest):
         ],
         "total_items": len(merged),
     }
+
+
+# ── POST /api/remix/resolve-deps ────────────────────────────
+
+@router.post("/resolve-deps")
+async def resolve_deps(req: RemixResolveRequest):
+    """Find unresolved deps that can be resolved from the palette."""
+    from code_extract.analysis.remix import (
+        RemixSource, merge_blocks, find_resolvable_deps,
+    )
+
+    sources, filtered_stores = _resolve_canvas_items(req.canvas_items)
+    merged, _origin_map = merge_blocks(sources, filtered_stores)
+
+    # Build flat palette from all scans
+    all_palette_flat = _build_palette_flat()
+
+    deps = find_resolvable_deps(merged, all_palette_flat)
+
+    resolvable = [d for d in deps if len(d["candidates"]) > 0]
+    unresolvable = [d for d in deps if len(d["candidates"]) == 0]
+
+    return {
+        "resolvable": resolvable,
+        "unresolvable": [{"unresolved_ref": d["unresolved_ref"], "needed_by": d["needed_by"]} for d in unresolvable],
+        "total_unresolved": len(deps),
+    }
+
+
+# ── POST /api/remix/template/match ──────────────────────────
+
+@router.post("/template/match")
+async def template_match(req: RemixTemplateMatchRequest):
+    """Match template item descriptors to current palette items."""
+    matches = []
+    for tmpl_item in req.items:
+        found = False
+        for scan_id, scan in state.scans.items():
+            if scan.status != "ready":
+                continue
+            for item in scan.items:
+                item_id = f"{item.file_path}:{item.line_number}"
+                if (item.name == tmpl_item.name
+                        and item.block_type.value == tmpl_item.type
+                        and item.language.value == tmpl_item.language):
+                    project_name = basename(scan.source_dir) if scan.source_dir else scan_id
+                    matches.append({
+                        "template_name": tmpl_item.name,
+                        "scan_id": scan_id,
+                        "item_id": item_id,
+                        "name": item.name,
+                        "type": item.block_type.value,
+                        "language": item.language.value,
+                        "parent": item.parent,
+                        "project_name": project_name,
+                    })
+                    found = True
+                    break
+            if found:
+                break
+        if not found:
+            matches.append({
+                "template_name": tmpl_item.name,
+                "unmatched": True,
+            })
+    return {"matches": matches}
+
+
+# ── POST /api/remix/preview ─────────────────────────────────
+
+@router.post("/preview")
+async def remix_preview(req: RemixPreviewRequest):
+    """Generate a live preview of remix output without writing to disk."""
+    from code_extract.analysis.remix import (
+        RemixSource, merge_blocks, preview_remix,
+    )
+
+    sources, filtered_stores = _resolve_canvas_items(req.canvas_items)
+    if not sources:
+        raise HTTPException(400, "No valid items on canvas")
+
+    merged, _origin = merge_blocks(sources, filtered_stores)
+    if not merged:
+        raise HTTPException(400, "No blocks found for selected items")
+
+    resolutions_dict = {r.composite_key: r.new_name for r in req.resolutions}
+
+    result = await asyncio.to_thread(
+        preview_remix, merged, resolutions_dict or None, req.project_name,
+    )
+
+    return result
 
 
 # ── POST /api/remix/build ───────────────────────────────────
@@ -248,3 +379,25 @@ def _resolve_canvas_items(
         filtered_stores[scan_id] = selected
 
     return sources, filtered_stores
+
+
+def _build_palette_flat() -> list[dict]:
+    """Build a flat list of all palette items across all scans."""
+    items: list[dict] = []
+    for scan_id, scan in state.scans.items():
+        if scan.status != "ready":
+            continue
+        project_name = basename(scan.source_dir) if scan.source_dir else scan_id
+        blocks = state.get_blocks_for_scan(scan_id)
+        for item in scan.items:
+            item_id = f"{item.file_path}:{item.line_number}"
+            items.append({
+                "scan_id": scan_id,
+                "item_id": item_id,
+                "name": item.name,
+                "type": item.block_type.value,
+                "language": item.language.value,
+                "parent": item.parent,
+                "project_name": project_name,
+            })
+    return items

@@ -348,3 +348,193 @@ def validate_remix(
 
     result.is_buildable = len(result.errors) == 0
     return result
+
+
+def compute_compatibility_score(
+    merged_blocks: dict[str, ExtractedBlock],
+    origin_map: dict[str, str],
+) -> dict:
+    """Compute a 0-100 compatibility score with letter grade and breakdown.
+
+    Penalties:
+      - Mixed language groups: −30 flat
+      - Unresolved refs: −25 × (unresolved / total_refs)
+      - Naming conflicts: −5 each, max −15
+      - Orphaned methods: −3 each, max −15
+      - Circular deps: −5 each, max −15
+    """
+    score = 100
+    breakdown: dict[str, float] = {
+        "language": 0,
+        "deps": 0,
+        "conflicts": 0,
+        "orphans": 0,
+        "cycles": 0,
+    }
+
+    # Language penalty
+    lang_issues = validate_language_coherence(merged_blocks)
+    if lang_issues:
+        penalty = 30
+        breakdown["language"] = penalty
+        score -= penalty
+
+    # Unresolved refs penalty
+    total_refs = 0
+    unresolved_count = 0
+    available: set[str] = set()
+    for block in merged_blocks.values():
+        available.add(block.item.name)
+        if block.item.parent:
+            available.add(block.item.qualified_name)
+    for block in merged_blocks.values():
+        for ref in block.type_references:
+            total_refs += 1
+            if ref not in available:
+                unresolved_count += 1
+    if total_refs > 0:
+        penalty = round(25 * (unresolved_count / total_refs), 1)
+        breakdown["deps"] = penalty
+        score -= penalty
+
+    # Naming conflicts penalty
+    conflicts = detect_naming_conflicts(merged_blocks, origin_map)
+    if conflicts:
+        penalty = min(len(conflicts) * 5, 15)
+        breakdown["conflicts"] = penalty
+        score -= penalty
+
+    # Orphaned methods penalty
+    orphan_issues = validate_orphaned_methods(merged_blocks)
+    if orphan_issues:
+        penalty = min(len(orphan_issues) * 3, 15)
+        breakdown["orphans"] = penalty
+        score -= penalty
+
+    # Circular deps penalty
+    cycle_issues = validate_circular_deps(merged_blocks)
+    if cycle_issues:
+        penalty = min(len(cycle_issues) * 5, 15)
+        breakdown["cycles"] = penalty
+        score -= penalty
+
+    score = max(0, round(score))
+
+    # Grade
+    if score >= 90:
+        grade = "A"
+    elif score >= 75:
+        grade = "B"
+    elif score >= 60:
+        grade = "C"
+    elif score >= 40:
+        grade = "D"
+    else:
+        grade = "F"
+
+    return {"score": score, "grade": grade, "breakdown": breakdown}
+
+
+def find_resolvable_deps(
+    merged_blocks: dict[str, ExtractedBlock],
+    all_palette_items: list[dict],
+) -> list[dict]:
+    """Find unresolved type references that can be resolved from the palette.
+
+    Returns a list of ``{unresolved_ref, needed_by, candidates}`` dicts,
+    sorted so resolvable refs (with candidates) come first.
+    """
+    # Build set of names already on canvas
+    canvas_names: set[str] = set()
+    canvas_item_keys: set[str] = set()
+    for key, block in merged_blocks.items():
+        canvas_names.add(block.item.name)
+        if block.item.parent:
+            canvas_names.add(block.item.qualified_name)
+        canvas_item_keys.add(key)
+
+    # Collect all unresolved refs → which composite keys need them
+    unresolved_map: dict[str, list[str]] = {}
+    for key, block in merged_blocks.items():
+        for ref in block.type_references:
+            if ref not in canvas_names:
+                unresolved_map.setdefault(ref, []).append(key)
+
+    if not unresolved_map:
+        return []
+
+    # Build palette index by name (excluding items already on canvas)
+    palette_by_name: dict[str, list[dict]] = {}
+    for item in all_palette_items:
+        composite = f"{item['scan_id']}::{item['item_id']}"
+        if composite in canvas_item_keys:
+            continue
+        palette_by_name.setdefault(item["name"], []).append(item)
+
+    # Match each unresolved ref to palette candidates
+    results: list[dict] = []
+    for ref_name, needed_by in unresolved_map.items():
+        candidates = palette_by_name.get(ref_name, [])
+        results.append({
+            "unresolved_ref": ref_name,
+            "needed_by": needed_by,
+            "candidates": candidates,
+        })
+
+    # Sort: resolvable (has candidates) first, then alphabetical
+    results.sort(key=lambda r: (len(r["candidates"]) == 0, r["unresolved_ref"]))
+    return results
+
+
+def preview_remix(
+    merged_blocks: dict[str, ExtractedBlock],
+    resolutions: dict[str, str] | None = None,
+    project_name: str = "remix-package",
+) -> dict:
+    """Generate a preview of the remix output without writing to disk.
+
+    Returns ``{files, primary_language, file_count}`` where each file is
+    ``{path, content, language, items}``.
+    """
+    from code_extract.cleaner import clean_block
+    from code_extract.formatter import format_block
+    from code_extract.exporter.package_exporter import _get_filename
+
+    # Apply resolutions if provided
+    if resolutions:
+        merged_blocks = apply_conflict_resolutions(merged_blocks, resolutions)
+
+    # Clean and format
+    blocks_list = list(merged_blocks.values())
+    cleaned = [clean_block(b) for b in blocks_list]
+    formatted = [format_block(b) for b in cleaned]
+
+    # Group by language to determine primary
+    by_language: dict[str, list] = {}
+    for fb in formatted:
+        lang = fb.item.language.value
+        by_language.setdefault(lang, []).append(fb)
+
+    primary_language = max(by_language, key=lambda k: len(by_language[k])) if by_language else "python"
+
+    # Build file list
+    files: list[dict] = []
+    for fb in formatted:
+        filename = _get_filename(fb)
+        content = ""
+        if fb.header:
+            content += fb.header + "\n\n"
+        content += fb.source_code
+
+        files.append({
+            "path": f"src/{filename}",
+            "content": content,
+            "language": fb.item.language.value,
+            "items": [fb.item.name],
+        })
+
+    return {
+        "files": files,
+        "primary_language": primary_language,
+        "file_count": len(files),
+    }

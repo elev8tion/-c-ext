@@ -429,7 +429,14 @@
             <div class="px-3 py-2 text-xs font-semibold uppercase" style="color: var(--text-muted); border-bottom: 1px solid var(--border-default)">
               Palette
             </div>
+            <input id="remix-palette-search" type="text" placeholder="Filter items..." class="remix-palette-search" oninput="app.onRemixPaletteSearch(this.value)">
             <div id="remix-palette" class="p-2 space-y-1"></div>
+            <!-- Templates section -->
+            <div class="flex items-center justify-between px-3 py-1.5 text-xs font-semibold uppercase" style="color: var(--text-muted); border-top: 1px solid var(--border-default); border-bottom: 1px solid var(--border-default)">
+              <span>Templates</span>
+              <button onclick="app.remixSaveTemplate()" class="neon-btn-outlined neon-btn-cyan" style="font-size:0.625rem; padding:0.125rem 0.5rem">+ Save</button>
+            </div>
+            <div id="remix-templates-list" class="p-2 space-y-1"></div>
           </div>
           <!-- Center: controls + canvas + conflicts -->
           <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
@@ -442,13 +449,21 @@
               </label>
               <div class="flex-1"></div>
               <span id="remix-count" class="text-xs" style="color: var(--text-muted)">0 items</span>
-              <button onclick="app.remixCheckCompatibility()" class="neon-btn-outlined neon-btn-cyan text-xs py-1">Check Compatibility</button>
-              <button id="remix-build-btn" onclick="app.remixBuild()" class="neon-btn-filled neon-btn-green text-xs py-1" disabled>Build</button>
-              <button onclick="app.remixClearCanvas()" class="neon-btn-outlined neon-btn-cyan text-xs py-1">Clear</button>
+              <div class="remix-btn-group">
+                <button onclick="app.remixCheckCompatibility()" class="neon-btn-outlined neon-btn-cyan text-xs py-1">Check</button>
+                <button id="remix-build-btn" onclick="app.remixBuild()" class="neon-btn-filled neon-btn-green text-xs py-1" disabled>Build</button>
+              </div>
+              <div class="remix-btn-group">
+                <button id="remix-preview-toggle" onclick="app.remixToggleLivePreview()" class="neon-btn-outlined neon-btn-cyan text-xs py-1">Preview</button>
+                <button onclick="app.remixResolveDeps()" class="neon-btn-outlined neon-btn-cyan text-xs py-1">Deps</button>
+              </div>
+              <button onclick="app.remixClearCanvas()" class="neon-btn-outlined neon-btn-danger text-xs py-1">Clear</button>
             </div>
             <!-- Validation bar -->
             <div id="remix-validation-bar" class="remix-validation-bar hidden"></div>
             <div id="remix-validation-details" class="remix-validation-details hidden"></div>
+            <!-- Suggestions panel -->
+            <div id="remix-suggestions" class="remix-suggestions-panel hidden"></div>
             <!-- Drop zone canvas -->
             <div id="remix-canvas" class="remix-canvas flex-1 overflow-y-auto">
               <div id="remix-canvas-placeholder" class="remix-canvas-placeholder">
@@ -457,18 +472,13 @@
               </div>
               <div id="remix-canvas-grid" class="remix-canvas-grid hidden"></div>
             </div>
+            <!-- Deps panel -->
+            <div id="remix-deps-panel" class="remix-deps-panel hidden"></div>
             <!-- Conflicts panel (slides up) -->
             <div id="remix-conflicts" class="remix-conflicts-panel hidden"></div>
           </div>
-          <!-- Preview sidebar (hidden until click) -->
-          <div id="remix-preview" class="w-80 overflow-y-auto shrink-0 hidden" style="border-left: 1px solid var(--border-default); background: var(--canvas-raised)">
-            <div class="flex items-center justify-between px-3 py-2" style="border-bottom: 1px solid var(--border-default)">
-              <span id="remix-preview-name" class="font-medium text-sm" style="color: var(--text-primary)"></span>
-              <button onclick="document.getElementById('remix-preview').classList.add('hidden')" class="text-lg" style="color: var(--text-muted)">&times;</button>
-            </div>
-            <div class="p-3">
-              <pre><code id="remix-preview-code" class="text-xs"></code></pre>
-            </div>
+          <!-- Live Preview sidebar -->
+          <div id="remix-live-preview" class="w-80 overflow-y-auto shrink-0 hidden" style="border-left: 1px solid var(--border-default); background: var(--canvas-raised)">
           </div>
         </div>
       </div>
