@@ -36,6 +36,11 @@ const app = (() => {
   let aiLoading = false;
   const AI_KEY_STORAGE = 'code-extract-ai-key';
 
+  // AI Agent / Copilot state
+  let aiAgentLoading = false;
+  let _aiWidgetVisible = false;
+  let _aiWidgetCollapsed = false;
+
   // Language compatibility groups (mirrors backend LANGUAGE_GROUPS)
   const REMIX_LANGUAGE_GROUPS = {
     javascript: 'js_ts', typescript: 'js_ts',
@@ -113,6 +118,12 @@ const app = (() => {
   // ═══════════════════════════════════════════════
 
   function switchTab(tabName) {
+    // Intercept 'ai' tab — open the floating widget instead
+    if (tabName === 'ai') {
+      if (!_aiWidgetVisible) toggleAIWidget();
+      return;
+    }
+
     activeTab = tabName;
 
     // Update nav items
@@ -163,7 +174,6 @@ const app = (() => {
       boilerplate: loadBoilerplate,
       migration: loadMigration,
       remix: loadRemix,
-      ai: loadAIChat,
     };
     const loader = loaders[tabName];
     if (loader) loader();
@@ -3619,6 +3629,352 @@ const app = (() => {
   }
 
   // ═══════════════════════════════════════════════
+  // AI COPILOT — Floating Widget + Agent
+  // ═══════════════════════════════════════════════
+
+  function toggleAIWidget() {
+    const widget = $('#ai-widget');
+    if (!widget) return;
+    _aiWidgetVisible = !_aiWidgetVisible;
+    widget.classList.toggle('hidden', !_aiWidgetVisible);
+
+    // Update nav item active state
+    const navItem = document.querySelector('.nav-item[data-tab="ai"]');
+    if (navItem) navItem.classList.toggle('active', _aiWidgetVisible);
+
+    if (_aiWidgetVisible) {
+      // Restore saved key
+      const savedKey = localStorage.getItem(AI_KEY_STORAGE) || '';
+      const keyInput = $('#ai-api-key');
+      if (keyInput && savedKey && !keyInput.value) keyInput.value = savedKey;
+      // Focus input
+      const input = $('#ai-agent-input');
+      if (input) setTimeout(() => input.focus(), 100);
+      // Init drag
+      _initWidgetDrag();
+    }
+  }
+
+  function aiWidgetCollapse() {
+    const widget = $('#ai-widget');
+    if (!widget) return;
+    _aiWidgetCollapsed = !_aiWidgetCollapsed;
+    widget.classList.toggle('collapsed', _aiWidgetCollapsed);
+  }
+
+  function aiWidgetSettings() {
+    const panel = $('#ai-widget-settings');
+    if (panel) panel.classList.toggle('visible');
+  }
+
+  // ── Draggable header ─────────────────────────
+  let _widgetDragInited = false;
+  function _initWidgetDrag() {
+    if (_widgetDragInited) return;
+    _widgetDragInited = true;
+    const header = $('#ai-widget-header');
+    const widget = $('#ai-widget');
+    if (!header || !widget) return;
+
+    let dragging = false, startX, startY, startLeft, startTop;
+
+    header.addEventListener('mousedown', (e) => {
+      if (e.target.closest('.ai-widget-header-btn')) return;
+      dragging = true;
+      const rect = widget.getBoundingClientRect();
+      startX = e.clientX;
+      startY = e.clientY;
+      startLeft = rect.left;
+      startTop = rect.top;
+      widget.style.transition = 'none';
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      const newLeft = Math.max(0, Math.min(window.innerWidth - 100, startLeft + dx));
+      const newTop = Math.max(0, Math.min(window.innerHeight - 40, startTop + dy));
+      widget.style.left = newLeft + 'px';
+      widget.style.top = newTop + 'px';
+      widget.style.right = 'auto';
+      widget.style.bottom = 'auto';
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (dragging) {
+        dragging = false;
+        widget.style.transition = '';
+      }
+    });
+
+    // Resize handle
+    const resizeHandle = widget.querySelector('.ai-widget-resize');
+    if (resizeHandle) {
+      let resizing = false, resizeStartY, resizeStartH;
+      resizeHandle.addEventListener('mousedown', (e) => {
+        resizing = true;
+        resizeStartY = e.clientY;
+        resizeStartH = widget.offsetHeight;
+        widget.style.transition = 'none';
+        e.preventDefault();
+        e.stopPropagation();
+      });
+      document.addEventListener('mousemove', (e) => {
+        if (!resizing) return;
+        const dy = resizeStartY - e.clientY;
+        const newH = Math.max(200, Math.min(800, resizeStartH + dy));
+        widget.style.height = newH + 'px';
+        // Adjust top so it grows upward
+        const rect = widget.getBoundingClientRect();
+        widget.style.top = (rect.bottom - newH) + 'px';
+        widget.style.bottom = 'auto';
+      });
+      document.addEventListener('mouseup', () => {
+        if (resizing) {
+          resizing = false;
+          widget.style.transition = '';
+        }
+      });
+    }
+  }
+
+  // ── Agent send ───────────────────────────────
+
+  async function aiAgentSend() {
+    const input = $('#ai-agent-input');
+    if (!input) return;
+    const query = input.value.trim();
+    if (!query || !currentScan || aiAgentLoading) return;
+
+    aiAgentLoading = true;
+    input.disabled = true;
+    const sendBtn = $('#ai-agent-send-btn');
+    if (sendBtn) sendBtn.disabled = true;
+
+    // Show user message
+    _aiWidgetAddMessage('user', query);
+    input.value = '';
+    input.style.height = 'auto';
+
+    // Show typing
+    _aiWidgetShowTyping();
+
+    try {
+      const res = await fetch('/api/ai/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scan_id: currentScan.scan_id,
+          query,
+          model: $('#ai-model')?.value || 'deepseek-coder',
+          api_key: $('#ai-api-key')?.value || '',
+        }),
+      });
+
+      _aiWidgetHideTyping();
+
+      if (res.status === 503) {
+        const err = await res.json();
+        _aiWidgetAddMessage('error', err.detail || 'API key not configured. Open settings (gear icon) to add your DeepSeek API key.');
+        return;
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Request failed' }));
+        _aiWidgetAddMessage('error', err.detail || 'Agent request failed');
+        return;
+      }
+
+      const data = await res.json();
+
+      // Render the answer
+      _aiWidgetAddMessage('assistant', data.answer, {
+        model: data.model,
+        usage: data.usage,
+      });
+
+      // Play actions if any
+      if (data.actions && data.actions.length > 0) {
+        await _aiPlayActions(data.actions);
+      }
+    } catch (err) {
+      _aiWidgetHideTyping();
+      _aiWidgetAddMessage('error', `Network error: ${err.message}`);
+    } finally {
+      aiAgentLoading = false;
+      input.disabled = false;
+      if (sendBtn) sendBtn.disabled = false;
+      input.focus();
+    }
+  }
+
+  // ── Action executor ──────────────────────────
+
+  async function _aiPlayActions(actions) {
+    const bar = $('#ai-action-bar');
+    const barText = $('#ai-action-text');
+    if (bar) bar.classList.add('active');
+
+    for (let i = 0; i < actions.length; i++) {
+      const action = actions[i];
+      const desc = _aiActionDescription(action);
+      if (barText) barText.textContent = `Step ${i + 1}/${actions.length}: ${desc}`;
+      _aiWidgetAddActionStep(desc);
+
+      try {
+        await _aiExecuteAction(action);
+      } catch (e) {
+        _aiWidgetAddActionStep(`Error: ${e.message}`);
+      }
+
+      // Delay between steps for visual feedback
+      if (i < actions.length - 1) {
+        await new Promise(r => setTimeout(r, 400));
+      }
+    }
+
+    if (bar) bar.classList.remove('active');
+    // Mark all step messages as done
+    $$('.ai-action-step-msg:not(.done)').forEach(el => el.classList.add('done'));
+  }
+
+  function _aiActionDescription(action) {
+    switch (action.type) {
+      case 'navigate': return `Navigate to ${action.tab}`;
+      case 'select': return `Select ${(action.item_names || []).join(', ')}`;
+      case 'fill': return `Fill ${action.selector}`;
+      case 'click': return `Run ${action.function}`;
+      case 'remix_add': return `Add ${action.name} to remix`;
+      case 'highlight': return `Highlight element`;
+      default: return action.type;
+    }
+  }
+
+  async function _aiExecuteAction(action) {
+    switch (action.type) {
+      case 'navigate':
+        switchTab(action.tab);
+        break;
+
+      case 'select':
+        if (action.item_ids) {
+          action.item_ids.forEach(id => selectedIds.add(id));
+          updateSelection();
+          // Re-render scan list to show checkmarks
+          if (typeof renderItems === 'function') renderItems();
+        }
+        break;
+
+      case 'fill': {
+        const el = document.querySelector(action.selector);
+        if (!el) break;
+        el.value = action.value || '';
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        _aiFlashElement(el);
+        break;
+      }
+
+      case 'click': {
+        const fn = app[action.function];
+        if (typeof fn === 'function') {
+          const result = fn();
+          if (result && typeof result.then === 'function') await result;
+        }
+        break;
+      }
+
+      case 'remix_add': {
+        addToRemixCanvas({
+          scan_id: action.scan_id,
+          item_id: action.item_id,
+          name: action.name,
+          type: action.item_type || 'function',
+          language: action.language || 'unknown',
+          project_name: currentScan?.source_dir?.split('/').pop() || 'project',
+        });
+        break;
+      }
+
+      case 'highlight': {
+        const el = action.selector ? document.querySelector(action.selector) : null;
+        if (el) _aiFlashElement(el);
+        break;
+      }
+    }
+  }
+
+  function _aiFlashElement(el) {
+    if (!el) return;
+    const original = el.style.boxShadow;
+    el.style.boxShadow = '0 0 12px rgba(0, 240, 255, 0.6), inset 0 0 4px rgba(0, 240, 255, 0.15)';
+    el.style.transition = 'box-shadow 0.3s ease';
+    setTimeout(() => {
+      el.style.boxShadow = original;
+      setTimeout(() => el.style.transition = '', 300);
+    }, 1500);
+  }
+
+  // ── Widget message rendering ─────────────────
+
+  function _aiWidgetAddMessage(role, content, meta) {
+    const container = $('#ai-widget-messages');
+    if (!container) return;
+
+    const msgId = 'ai-wm-' + Math.random().toString(36).slice(2, 8);
+    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    let roleLabel = role === 'user' ? 'You' : role === 'assistant' ? 'Copilot' : 'Error';
+    let cssClass = `ai-message ai-message-${role === 'error' ? 'error' : role}`;
+
+    let headerExtra = '';
+    if (meta?.model) {
+      headerExtra += `<span class="ai-message-model">${esc(meta.model)}</span>`;
+    }
+
+    const rendered = role === 'user' ? esc(content).replace(/\n/g, '<br>') : _aiRenderMarkdown(content);
+
+    const html = `<div id="${msgId}" class="${cssClass}" data-raw-content="${esc(content)}">
+      <div class="ai-message-header">
+        <span class="ai-message-role">${roleLabel}</span>
+        ${headerExtra}
+        <span class="ai-message-time">${time}</span>
+        ${role === 'assistant' ? `<button class="ai-msg-copy-btn" onclick="app.aiCopyMessage('${msgId}')">Copy</button>` : ''}
+      </div>
+      <div class="ai-message-content">${rendered}</div>
+      ${meta?.usage ? `<div class="ai-message-footer">${meta.usage.total_tokens || 0} tokens</div>` : ''}
+    </div>`;
+
+    container.insertAdjacentHTML('beforeend', html);
+    container.scrollTop = container.scrollHeight;
+  }
+
+  function _aiWidgetAddActionStep(desc) {
+    const container = $('#ai-widget-messages');
+    if (!container) return;
+    const html = `<div class="ai-action-step-msg">&#x25B6; ${esc(desc)}</div>`;
+    container.insertAdjacentHTML('beforeend', html);
+    container.scrollTop = container.scrollHeight;
+  }
+
+  function _aiWidgetShowTyping() {
+    const container = $('#ai-widget-messages');
+    if (!container) return;
+    const indicator = document.createElement('div');
+    indicator.id = 'ai-widget-typing';
+    indicator.className = 'ai-typing-indicator';
+    indicator.innerHTML = '<span class="ai-typing-dot"></span><span class="ai-typing-dot"></span><span class="ai-typing-dot"></span>';
+    container.appendChild(indicator);
+    container.scrollTop = container.scrollHeight;
+  }
+
+  function _aiWidgetHideTyping() {
+    const el = document.getElementById('ai-widget-typing');
+    if (el) el.remove();
+  }
+
+  // ═══════════════════════════════════════════════
   // INIT
   // ═══════════════════════════════════════════════
 
@@ -3650,8 +4006,10 @@ const app = (() => {
     remixResolveDeps, remixAddDep, remixAddAllResolvable,
     // UX Gap Fixes
     onRemixPaletteSearch, toggleRemixScoreBreakdown,
-    // AI Chat
+    // AI Chat (legacy)
     aiSendQuery, aiClearChat, aiSaveKey, aiToggleKeyVisibility,
     aiCopyCode, aiCopyMessage,
+    // AI Copilot
+    toggleAIWidget, aiWidgetCollapse, aiWidgetSettings, aiAgentSend,
   };
 })();

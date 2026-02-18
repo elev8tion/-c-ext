@@ -22,6 +22,13 @@ class ChatRequest(BaseModel):
     api_key: Optional[str] = None
 
 
+class AgentChatRequest(BaseModel):
+    scan_id: str
+    query: str
+    model: Optional[str] = None
+    api_key: Optional[str] = None
+
+
 @router.post("/chat")
 async def chat_with_scan(req: ChatRequest):
     """Chat about code from a specific scan."""
@@ -128,4 +135,78 @@ async def get_chat_history(scan_id: str):
 async def clear_chat_history(scan_id: str):
     """Clear chat history for a scan."""
     state.store_analysis(scan_id, "chat_history", [])
+    return {"cleared": True}
+
+
+# ── Agentic Copilot ────────────────────────────────────────────────
+
+MAX_AGENT_HISTORY_TURNS = 5
+
+
+@router.post("/agent")
+async def agent_chat_endpoint(req: AgentChatRequest):
+    """Agentic copilot — tool-calling loop with UI actions."""
+    from code_extract.ai import AIConfig, AIModel
+    from code_extract.ai.service import DeepSeekService
+
+    scan = state.scans.get(req.scan_id)
+    if not scan:
+        raise HTTPException(404, detail="Scan session not found")
+
+    config = AIConfig(api_key=req.api_key or "")
+    if req.model:
+        try:
+            config.model = AIModel(req.model)
+        except ValueError:
+            pass
+
+    if not config.api_key:
+        raise HTTPException(
+            503,
+            detail="DeepSeek API key not configured. Set the DEEPSEEK_API_KEY environment variable.",
+        )
+
+    # Load agent conversation history (last N turns)
+    history = state.get_analysis(req.scan_id, "agent_history") or []
+
+    service = DeepSeekService(config)
+    try:
+        result = await service.agent_chat(
+            query=req.query,
+            scan_id=req.scan_id,
+            history=history,
+        )
+    except Exception as e:
+        raise HTTPException(500, detail=f"AI agent error: {e}")
+    finally:
+        await service.close()
+
+    # Update stored history (trim to last N turns)
+    history_update = result.get("history_update", [])
+    updated_history = history + history_update
+    # Keep last MAX_AGENT_HISTORY_TURNS * 2 messages (user + assistant pairs)
+    max_messages = MAX_AGENT_HISTORY_TURNS * 2
+    if len(updated_history) > max_messages:
+        updated_history = updated_history[-max_messages:]
+    state.store_analysis(req.scan_id, "agent_history", updated_history)
+
+    return {
+        "answer": result["answer"],
+        "actions": result["actions"],
+        "model": result["model"],
+        "usage": result["usage"],
+    }
+
+
+@router.get("/agent/history/{scan_id}")
+async def get_agent_history(scan_id: str):
+    """Get agent conversation history for a scan."""
+    history = state.get_analysis(scan_id, "agent_history") or []
+    return {"history": history}
+
+
+@router.delete("/agent/history/{scan_id}")
+async def clear_agent_history(scan_id: str):
+    """Clear agent conversation history for a scan."""
+    state.store_analysis(scan_id, "agent_history", [])
     return {"cleared": True}

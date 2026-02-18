@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -14,6 +15,7 @@ logger = logging.getLogger(__name__)
 # Limits to keep prompts within context window
 MAX_CODE_BLOCKS = 10
 MAX_CODE_CHARS = 1000
+MAX_TOOL_ITERATIONS = 5
 
 
 class DeepSeekService:
@@ -119,6 +121,133 @@ class DeepSeekService:
                 parts.append(f"Potential Dead Code: {count} items")
 
         return "\n".join(parts)
+
+    # ── Agentic copilot ───────────────────────────────────────────
+
+    async def agent_chat(
+        self,
+        query: str,
+        scan_id: str,
+        history: list[dict[str, str]],
+    ) -> dict[str, Any]:
+        """Run an agentic chat with tool-calling loop.
+
+        Args:
+            query: User's natural language request.
+            scan_id: Active scan session ID.
+            history: Last N conversation turns as {role, content} dicts.
+
+        Returns:
+            {answer, actions, model, usage, history_update}
+        """
+        from .tools import TOOL_DEFINITIONS, execute_tool
+
+        system_prompt = self._build_agent_system_prompt()
+        messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
+        messages.extend(history)
+        messages.append({"role": "user", "content": query})
+
+        all_actions: list[dict] = []
+        total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        model_name = self.config.model.value
+
+        for iteration in range(MAX_TOOL_ITERATIONS):
+            response = await self.client.post(
+                f"{self.config.base_url}/chat/completions",
+                json={
+                    "model": self.config.model.value,
+                    "messages": messages,
+                    "tools": TOOL_DEFINITIONS,
+                    "tool_choice": "auto",
+                    "temperature": self.config.temperature,
+                    "max_tokens": self.config.max_tokens,
+                    "stream": False,
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            # Accumulate usage
+            usage = data.get("usage", {})
+            for k in total_usage:
+                total_usage[k] += usage.get(k, 0)
+
+            model_name = data.get("model", model_name)
+            choice = data.get("choices", [{}])[0]
+            message = choice.get("message", {})
+            finish_reason = choice.get("finish_reason", "stop")
+
+            # No tool calls — we have the final answer
+            if finish_reason != "tool_calls" and not message.get("tool_calls"):
+                answer = message.get("content", "")
+                history_update = [
+                    {"role": "user", "content": query},
+                    {"role": "assistant", "content": answer},
+                ]
+                return {
+                    "answer": answer,
+                    "actions": all_actions,
+                    "model": model_name,
+                    "usage": total_usage,
+                    "history_update": history_update,
+                }
+
+            # Process tool calls
+            # Add the assistant message with tool_calls to conversation
+            messages.append(message)
+
+            for tool_call in message.get("tool_calls", []):
+                fn = tool_call.get("function", {})
+                tool_name = fn.get("name", "")
+                try:
+                    arguments = json.loads(fn.get("arguments", "{}"))
+                except (json.JSONDecodeError, TypeError):
+                    arguments = {}
+
+                tool_id = tool_call.get("id", "")
+                result_text, actions = execute_tool(tool_name, scan_id, arguments)
+                all_actions.extend(actions)
+
+                # Add tool result to conversation
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_id,
+                    "content": result_text,
+                })
+
+        # Safety: max iterations reached — return whatever we have
+        answer = "I completed the available actions. Let me know if you need anything else."
+        return {
+            "answer": answer,
+            "actions": all_actions,
+            "model": model_name,
+            "usage": total_usage,
+            "history_update": [
+                {"role": "user", "content": query},
+                {"role": "assistant", "content": answer},
+            ],
+        }
+
+    def _build_agent_system_prompt(self) -> str:
+        """System prompt for the agentic copilot."""
+        return (
+            "You are an AI copilot integrated with code-extract, a code analysis and extraction tool.\n"
+            "You can answer questions about the scanned codebase AND take actions in the UI.\n\n"
+            "## Available capabilities:\n"
+            "- **Data queries**: Search items, get source code, health scores, architecture info, "
+            "dead code, and dependencies.\n"
+            "- **UI navigation**: Switch between tabs (scan, catalog, architecture, health, docs, "
+            "deadcode, tour, clone, boilerplate, migration, remix).\n"
+            "- **Workflows**: Clone items, add to remix board, build remix projects, detect "
+            "boilerplate, run comparisons, extract code, detect migrations.\n\n"
+            "## Guidelines:\n"
+            "- Use data tools to gather information before answering questions.\n"
+            "- Use UI action tools when the user wants to navigate or perform operations.\n"
+            "- For multi-step workflows (like cloning), use the appropriate workflow tool.\n"
+            "- Be concise but helpful in your responses.\n"
+            "- If an item name is ambiguous, search first to find the exact match.\n"
+            "- When reporting data, summarize the key findings clearly.\n"
+        )
 
     async def close(self):
         """Clean up the HTTP client."""
