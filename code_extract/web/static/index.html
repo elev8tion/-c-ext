@@ -22,13 +22,17 @@
   <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
   <link rel="stylesheet" href="/styles.css">
 </head>
-<body class="bg-canvas text-[rgba(255,255,255,0.92)] h-screen flex flex-col overflow-hidden">
+<body class="bg-canvas text-[rgba(255,255,255,0.92)] h-screen-safe flex flex-col overflow-hidden">
+
+  <!-- Backdrop overlays for responsive sidebar/preview -->
+  <div id="sidebar-backdrop" class="sidebar-backdrop" onclick="app.closeSidebar()"></div>
+  <div id="bottom-sheet-overlay" class="bottom-sheet-overlay" onclick="app.closePreview()"></div>
 
   <!-- Main 3-column layout -->
   <div class="flex flex-1 overflow-hidden">
 
     <!-- ═══ Left Sidebar — Navigation ═══ -->
-    <aside class="w-64 border-r flex flex-col shrink-0" style="border-color: var(--border-default); background: var(--canvas-raised)">
+    <aside id="left-sidebar" class="w-64 border-r flex flex-col shrink-0" style="border-color: var(--border-default); background: var(--canvas-raised)">
 
       <!-- Brand -->
       <div class="px-4 pt-4 pb-2 flex items-center gap-2">
@@ -123,6 +127,17 @@
     <!-- ═══ Main Content ═══ -->
     <main class="flex-1 flex flex-col overflow-hidden">
 
+      <!-- Mobile top bar (hamburger + tab name) -->
+      <div class="mobile-top-bar">
+        <button class="hamburger-btn" onclick="app.toggleSidebar()" aria-label="Menu">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 12h18M3 6h18M3 18h18"/>
+          </svg>
+        </button>
+        <span id="mobile-tab-name" class="mobile-tab-name">Scan Results</span>
+        <div style="flex:1"></div>
+      </div>
+
       <!-- ═══ Tab: Scan ═══ -->
       <div id="tab-scan" class="tab-panel active flex flex-col flex-1 overflow-hidden">
         <div class="info-bar shrink-0">
@@ -143,21 +158,23 @@
               <p>Enter a project path and click Run Scan</p>
             </div>
           </div>
-          <table id="results-table" class="w-full text-sm hidden">
-            <thead>
-              <tr style="border-bottom: 1px solid var(--border-default)">
-                <th class="w-8"></th>
-                <th class="text-left px-2 py-1.5 text-[0.625rem] font-semibold uppercase tracking-wider" style="color: var(--text-muted)">Type</th>
-                <th class="text-left px-2 py-1.5 text-[0.625rem] font-semibold uppercase tracking-wider" style="color: var(--text-muted)">Name</th>
-                <th class="text-left px-2 py-1.5 text-[0.625rem] font-semibold uppercase tracking-wider" style="color: var(--text-muted)">Lang</th>
-                <th class="text-left px-2 py-1.5 text-[0.625rem] font-semibold uppercase tracking-wider" style="color: var(--text-muted)">Deps</th>
-                <th class="text-left px-2 py-1.5 text-[0.625rem] font-semibold uppercase tracking-wider" style="color: var(--text-muted)">Size</th>
-                <th class="text-left px-2 py-1.5 text-[0.625rem] font-semibold uppercase tracking-wider" style="color: var(--text-muted)">Health</th>
-                <th class="text-right pr-4 py-1.5 text-[0.625rem] font-semibold uppercase tracking-wider" style="color: var(--text-muted)">Lines</th>
-              </tr>
-            </thead>
-            <tbody id="results-body"></tbody>
-          </table>
+          <div class="table-scroll-wrapper">
+            <table id="results-table" class="w-full text-sm hidden">
+              <thead>
+                <tr style="border-bottom: 1px solid var(--border-default)">
+                  <th class="w-8"></th>
+                  <th class="text-left px-2 py-1.5 text-[0.625rem] font-semibold uppercase tracking-wider" style="color: var(--text-muted)">Type</th>
+                  <th class="text-left px-2 py-1.5 text-[0.625rem] font-semibold uppercase tracking-wider" style="color: var(--text-muted)">Name</th>
+                  <th class="text-left px-2 py-1.5 text-[0.625rem] font-semibold uppercase tracking-wider" style="color: var(--text-muted)">Lang</th>
+                  <th class="text-left px-2 py-1.5 text-[0.625rem] font-semibold uppercase tracking-wider" style="color: var(--text-muted)">Deps</th>
+                  <th class="text-left px-2 py-1.5 text-[0.625rem] font-semibold uppercase tracking-wider" style="color: var(--text-muted)">Size</th>
+                  <th class="text-left px-2 py-1.5 text-[0.625rem] font-semibold uppercase tracking-wider" style="color: var(--text-muted)">Health</th>
+                  <th class="text-right pr-4 py-1.5 text-[0.625rem] font-semibold uppercase tracking-wider" style="color: var(--text-muted)">Lines</th>
+                </tr>
+              </thead>
+              <tbody id="results-body"></tbody>
+            </table>
+          </div>
         </div>
       </div>
 
@@ -199,6 +216,7 @@
               <button class="arch-ctrl-btn" onclick="app.archResetHighlight()">Reset</button>
               <button class="arch-ctrl-btn" onclick="app.exportArchPNG()">Export PNG</button>
               <input id="arch-search" type="text" placeholder="Search nodes..." class="arch-search-input" oninput="app.archSearchNodes(this.value)">
+              <button class="arch-ctrl-btn mobile-toggle-btn" onclick="app.toggleArchModules()">Modules</button>
             </div>
             <!-- Legend overlay -->
             <div id="arch-legend" class="arch-legend">
@@ -310,18 +328,20 @@
             <h2 class="text-lg font-semibold" style="color: var(--text-primary)">Dead Code Detector</h2>
             <span id="deadcode-count" class="text-xs" style="color: var(--text-muted)"></span>
           </div>
-          <table class="w-full text-sm">
-            <thead>
-              <tr style="border-bottom: 1px solid var(--border-default)">
-                <th class="text-left px-3 py-2 text-[0.625rem] font-semibold uppercase" style="color: var(--text-muted)">Name</th>
-                <th class="text-left px-3 py-2 text-[0.625rem] font-semibold uppercase" style="color: var(--text-muted)">Type</th>
-                <th class="text-left px-3 py-2 text-[0.625rem] font-semibold uppercase" style="color: var(--text-muted)">File</th>
-                <th class="text-left px-3 py-2 text-[0.625rem] font-semibold uppercase" style="color: var(--text-muted)">Confidence</th>
-                <th class="text-left px-3 py-2 text-[0.625rem] font-semibold uppercase" style="color: var(--text-muted)">Reason</th>
-              </tr>
-            </thead>
-            <tbody id="deadcode-body"></tbody>
-          </table>
+          <div class="table-scroll-wrapper">
+            <table class="w-full text-sm">
+              <thead>
+                <tr style="border-bottom: 1px solid var(--border-default)">
+                  <th class="text-left px-3 py-2 text-[0.625rem] font-semibold uppercase" style="color: var(--text-muted)">Name</th>
+                  <th class="text-left px-3 py-2 text-[0.625rem] font-semibold uppercase" style="color: var(--text-muted)">Type</th>
+                  <th class="text-left px-3 py-2 text-[0.625rem] font-semibold uppercase" style="color: var(--text-muted)">File</th>
+                  <th class="text-left px-3 py-2 text-[0.625rem] font-semibold uppercase" style="color: var(--text-muted)">Confidence</th>
+                  <th class="text-left px-3 py-2 text-[0.625rem] font-semibold uppercase" style="color: var(--text-muted)">Reason</th>
+                </tr>
+              </thead>
+              <tbody id="deadcode-body"></tbody>
+            </table>
+          </div>
         </div>
       </div>
 
@@ -336,6 +356,7 @@
             <div id="tour-step-list" class="space-y-1"></div>
           </div>
           <div class="flex-1 overflow-y-auto p-6">
+            <button class="arch-ctrl-btn mobile-toggle-btn mb-3" onclick="app.toggleTourSteps()">Steps</button>
             <div id="tour-step-content"></div>
             <div class="flex items-center gap-3 mt-6">
               <button id="tour-prev" onclick="app.tourPrev()" class="neon-btn-outlined neon-btn-cyan text-xs py-1" disabled>Previous</button>
@@ -447,6 +468,7 @@
           <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
             <!-- Controls bar -->
             <div class="remix-controls">
+              <button class="arch-ctrl-btn mobile-toggle-btn" onclick="app.toggleRemixPalette()">Palette</button>
               <input id="remix-project-name" type="text" placeholder="remix-package" value="remix-package"
                 class="glass-input px-2 py-1 text-xs w-40">
               <label class="flex items-center gap-1.5 text-xs" style="color: var(--text-secondary)">
@@ -588,7 +610,7 @@
   </div>
 
   <!-- ═══ Footer ═══ -->
-  <footer class="flex items-center gap-4 px-4 py-2 shrink-0" style="border-top: 1px solid var(--border-default)">
+  <footer id="main-footer" class="flex items-center gap-4 px-4 py-2 shrink-0" style="border-top: 1px solid var(--border-default)">
     <div class="flex items-center gap-2 text-xs" style="color: var(--text-muted)">
       <span class="status-dot connected"></span>
       <span id="footer-status">Ready</span>

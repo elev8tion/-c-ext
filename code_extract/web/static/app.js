@@ -41,6 +41,13 @@ const app = (() => {
   let _aiWidgetVisible = false;
   let _aiWidgetCollapsed = false;
 
+  // Responsive state
+  let _sidebarOpen = false;
+  let _isMobile = false;
+  let _isTablet = false;
+  const BREAKPOINT_MOBILE = 768;
+  const BREAKPOINT_DESKTOP = 1024;
+
   // Language compatibility groups (mirrors backend LANGUAGE_GROUPS)
   const REMIX_LANGUAGE_GROUPS = {
     javascript: 'js_ts', typescript: 'js_ts',
@@ -146,6 +153,13 @@ const app = (() => {
     if (filters) {
       filters.style.display = tabName === 'scan' ? '' : 'none';
     }
+
+    // Update mobile tab name
+    const tabNameMap = { scan:'Scan Results', catalog:'Catalog', health:'Health', architecture:'Architecture', deadcode:'Dead Code', docs:'Docs', compare:'Compare', tour:'Tour', clone:'Clone', boilerplate:'Boilerplate', migration:'Migration', remix:'Remix Board' };
+    const mtn = $('#mobile-tab-name');
+    if (mtn) mtn.textContent = tabNameMap[tabName] || tabName;
+    // Auto-close sidebar on mobile/tablet
+    if (_isMobile || _isTablet) closeSidebar();
 
     // Re-layout architecture graph when switching to its tab (may have been initialized while hidden with 0x0 container)
     if (tabName === 'architecture' && archCy) {
@@ -607,6 +621,12 @@ const app = (() => {
       panel.classList.remove('hidden');
       panel.classList.add('flex');
 
+      // Activate bottom-sheet overlay on mobile
+      if (_isMobile) {
+        const overlay = $('#bottom-sheet-overlay');
+        if (overlay) overlay.classList.add('active');
+      }
+
       // Render detail cards
       renderDetailCards();
     } catch (err) {
@@ -618,6 +638,8 @@ const app = (() => {
     const panel = $('#preview-panel');
     panel.classList.add('hidden');
     panel.classList.remove('flex');
+    const overlay = $('#bottom-sheet-overlay');
+    if (overlay) overlay.classList.remove('active');
   }
 
   // ═══════════════════════════════════════════════
@@ -3714,6 +3736,39 @@ const app = (() => {
       }
     });
 
+    // Touch support for dragging
+    header.addEventListener('touchstart', (e) => {
+      if (e.target.closest('.ai-widget-header-btn')) return;
+      const t = e.touches[0];
+      dragging = true;
+      const rect = widget.getBoundingClientRect();
+      startX = t.clientX;
+      startY = t.clientY;
+      startLeft = rect.left;
+      startTop = rect.top;
+      widget.style.transition = 'none';
+    }, { passive: true });
+
+    document.addEventListener('touchmove', (e) => {
+      if (!dragging) return;
+      const t = e.touches[0];
+      const dx = t.clientX - startX;
+      const dy = t.clientY - startY;
+      const newLeft = Math.max(0, Math.min(window.innerWidth - 100, startLeft + dx));
+      const newTop = Math.max(0, Math.min(window.innerHeight - 40, startTop + dy));
+      widget.style.left = newLeft + 'px';
+      widget.style.top = newTop + 'px';
+      widget.style.right = 'auto';
+      widget.style.bottom = 'auto';
+    }, { passive: true });
+
+    document.addEventListener('touchend', () => {
+      if (dragging) {
+        dragging = false;
+        widget.style.transition = '';
+      }
+    });
+
     // Resize handle
     const resizeHandle = widget.querySelector('.ai-widget-resize');
     if (resizeHandle) {
@@ -3989,6 +4044,107 @@ const app = (() => {
   }
 
   // ═══════════════════════════════════════════════
+  // RESPONSIVE
+  // ═══════════════════════════════════════════════
+
+  function _detectViewport() {
+    const w = window.innerWidth;
+    _isMobile = w < BREAKPOINT_MOBILE;
+    _isTablet = w >= BREAKPOINT_MOBILE && w < BREAKPOINT_DESKTOP;
+  }
+
+  function toggleSidebar() {
+    _sidebarOpen = !_sidebarOpen;
+    const sidebar = $('#left-sidebar');
+    const backdrop = $('#sidebar-backdrop');
+    if (sidebar) sidebar.classList.toggle('open', _sidebarOpen);
+    if (backdrop) backdrop.classList.toggle('active', _sidebarOpen);
+    // Lock body scroll when sidebar is open on mobile
+    document.body.style.overflow = _sidebarOpen ? 'hidden' : '';
+  }
+
+  function closeSidebar() {
+    if (!_sidebarOpen) return;
+    _sidebarOpen = false;
+    const sidebar = $('#left-sidebar');
+    const backdrop = $('#sidebar-backdrop');
+    if (sidebar) sidebar.classList.remove('open');
+    if (backdrop) backdrop.classList.remove('active');
+    document.body.style.overflow = '';
+  }
+
+  function toggleArchModules() {
+    const content = $('#arch-content');
+    if (content) content.classList.toggle('show-modules');
+  }
+
+  function toggleTourSteps() {
+    const content = $('#tour-content');
+    if (content) content.classList.toggle('show-steps');
+  }
+
+  function toggleRemixPalette() {
+    const content = $('#remix-content');
+    if (content) content.classList.toggle('show-palette');
+  }
+
+  function _cleanupResponsiveState() {
+    // When crossing to desktop, clean up all mobile/tablet overlay states
+    closeSidebar();
+    const bso = $('#bottom-sheet-overlay');
+    if (bso) bso.classList.remove('active');
+    // Close tab-specific sidebar overlays
+    const archContent = $('#arch-content');
+    if (archContent) archContent.classList.remove('show-modules');
+    const tourContent = $('#tour-content');
+    if (tourContent) tourContent.classList.remove('show-steps');
+    const remixContent = $('#remix-content');
+    if (remixContent) remixContent.classList.remove('show-palette');
+  }
+
+  // Debounced resize handler
+  let _resizeTimer = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(_resizeTimer);
+    _resizeTimer = setTimeout(() => {
+      const wasMobileOrTablet = _isMobile || _isTablet;
+      _detectViewport();
+      const isDesktopNow = !_isMobile && !_isTablet;
+
+      // Clean up overlays when crossing to desktop
+      if (wasMobileOrTablet && isDesktopNow) {
+        _cleanupResponsiveState();
+      }
+
+      // Re-layout architecture graph on resize
+      if (archCy && activeTab === 'architecture') {
+        archCy.resize();
+        archCy.fit(undefined, 30);
+      }
+    }, 150);
+  });
+
+  // Escape key handler to close any open overlay
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      if (_sidebarOpen) { closeSidebar(); return; }
+      // Close tab-specific overlays
+      const archContent = $('#arch-content');
+      if (archContent && archContent.classList.contains('show-modules')) { archContent.classList.remove('show-modules'); return; }
+      const tourContent = $('#tour-content');
+      if (tourContent && tourContent.classList.contains('show-steps')) { tourContent.classList.remove('show-steps'); return; }
+      const remixContent = $('#remix-content');
+      if (remixContent && remixContent.classList.contains('show-palette')) { remixContent.classList.remove('show-palette'); return; }
+      // Close preview panel bottom sheet
+      const bso = $('#bottom-sheet-overlay');
+      if (bso && bso.classList.contains('active')) { closePreview(); return; }
+    }
+  });
+
+  // Init viewport detection
+  _detectViewport();
+
+  // ═══════════════════════════════════════════════
   // INIT
   // ═══════════════════════════════════════════════
 
@@ -4025,5 +4181,7 @@ const app = (() => {
     aiCopyCode, aiCopyMessage,
     // AI Copilot
     toggleAIWidget, aiWidgetCollapse, aiWidgetSettings, aiAgentSend,
+    // Responsive
+    toggleSidebar, closeSidebar, toggleArchModules, toggleTourSteps, toggleRemixPalette,
   };
 })();

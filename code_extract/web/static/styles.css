@@ -2051,7 +2051,7 @@ tr.file-group-header {
   display: none;
 }
 
-/* Responsive */
+/* Responsive — AI widget (small screens) */
 @media (max-width: 640px) {
   .ai-widget {
     width: calc(100vw - 1rem);
@@ -2059,4 +2059,331 @@ tr.file-group-header {
     left: 0.5rem;
     bottom: 0.5rem;
   }
+}
+
+/* ═══ Responsive — Utilities ═══ */
+
+.h-screen-safe { height: 100vh; height: 100dvh; }
+
+.sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 39;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+.sidebar-backdrop.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.bottom-sheet-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  z-index: 49;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+.bottom-sheet-overlay.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.hamburger-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.hamburger-btn svg {
+  width: 22px;
+  height: 22px;
+}
+
+.mobile-top-bar {
+  display: none;
+  align-items: center;
+  padding: 0 0.5rem;
+  background: var(--canvas-raised);
+  border-bottom: 1px solid var(--border-default);
+  flex-shrink: 0;
+  min-height: 48px;
+}
+
+.mobile-tab-name {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.table-scroll-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+#left-sidebar {
+  transition: transform 0.25s ease;
+}
+
+/* Toggle buttons for tab-specific sidebars (hidden by default) */
+.mobile-toggle-btn {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* ═══ Responsive — Desktop Safeguard (1024px+) ═══ */
+
+@media (min-width: 1024px) {
+  .hamburger-btn { display: none !important; }
+  .mobile-top-bar { display: none !important; }
+  .sidebar-backdrop { display: none !important; }
+  .bottom-sheet-overlay { display: none !important; }
+  .mobile-toggle-btn { display: none !important; }
+  #left-sidebar {
+    position: relative !important;
+    transform: none !important;
+    width: 16rem !important;
+    z-index: auto !important;
+  }
+  #preview-panel {
+    position: relative !important;
+    bottom: auto !important;
+    left: auto !important;
+    right: auto !important;
+    top: auto !important;
+    max-height: none !important;
+    border-radius: 0 !important;
+  }
+}
+
+/* ═══ Responsive — Tablet (768px–1023px) ═══ */
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .hamburger-btn { display: flex; }
+  .mobile-top-bar { display: flex; }
+
+  #left-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 280px;
+    z-index: 40;
+    transform: translateX(-100%);
+  }
+  #left-sidebar.open {
+    transform: translateX(0);
+  }
+
+  /* Preview panel narrower */
+  #preview-panel {
+    width: 300px !important;
+  }
+
+  /* Control bars wrap */
+  .arch-controls, .remix-controls { flex-wrap: wrap; }
+  footer, .info-bar { flex-wrap: wrap; }
+
+  /* Card grids */
+  .card-grid {
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  }
+
+  /* Tab-specific sidebars as overlays */
+  .mobile-toggle-btn { display: flex; }
+
+  #arch-content > .w-72 {
+    display: none;
+  }
+  #arch-content.show-modules > .w-72 {
+    display: block;
+    position: fixed;
+    top: 0; right: 0; bottom: 0;
+    width: 280px;
+    z-index: 45;
+    background: var(--canvas-raised);
+    border-left: 1px solid var(--border-default);
+    overflow-y: auto;
+  }
+
+  #tour-content > .w-48 {
+    display: none;
+  }
+  #tour-content.show-steps > .w-48 {
+    display: block;
+    position: fixed;
+    top: 0; left: 0; bottom: 0;
+    width: 220px;
+    z-index: 45;
+    background: var(--canvas-raised);
+    border-right: 1px solid var(--border-default);
+    overflow-y: auto;
+  }
+
+  #remix-content > .w-72:first-child {
+    display: none;
+  }
+  #remix-content.show-palette > .w-72:first-child {
+    display: block;
+    position: fixed;
+    top: 0; left: 0; bottom: 0;
+    width: 280px;
+    z-index: 45;
+    background: var(--canvas-raised);
+    border-right: 1px solid var(--border-default);
+    overflow-y: auto;
+  }
+}
+
+/* ═══ Responsive — Mobile (<768px) ═══ */
+
+@media (max-width: 767px) {
+  .hamburger-btn { display: flex; }
+  .mobile-top-bar { display: flex; }
+
+  /* Left sidebar — slide-in overlay */
+  #left-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 280px;
+    z-index: 40;
+    transform: translateX(-100%);
+  }
+  #left-sidebar.open {
+    transform: translateX(0);
+  }
+
+  /* Preview panel — bottom sheet */
+  #preview-panel {
+    position: fixed !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
+    width: 100% !important;
+    max-height: 70vh;
+    border-radius: 1rem 1rem 0 0;
+    z-index: 50;
+    overflow-y: auto;
+  }
+
+  /* Tables: horizontal scroll */
+  #results-table, #tab-deadcode table { min-width: 600px; }
+
+  /* Footer wraps */
+  footer, .info-bar { flex-wrap: wrap; gap: 0.5rem; }
+
+  /* Tab headers wrap */
+  #tab-catalog .flex.items-center.gap-4,
+  #tab-health .flex.items-center.gap-4,
+  #tab-docs .flex.items-center.gap-4,
+  #tab-compare .flex.items-center.gap-4,
+  #tab-deadcode .flex.items-center.gap-4,
+  #tab-clone .flex.items-center.gap-4,
+  #tab-boilerplate .flex.items-center.gap-4,
+  #tab-migration .flex.items-center.gap-4 {
+    flex-wrap: wrap;
+  }
+
+  /* Compare/Clone inputs stack vertically */
+  #tab-compare .flex.gap-4.mb-4,
+  #tab-clone .flex.gap-4.mb-4 {
+    flex-direction: column;
+  }
+
+  /* Diff side-by-side stacks */
+  .diff-side-by-side { grid-template-columns: 1fr; }
+
+  /* Control bars wrap */
+  .arch-controls, .remix-controls { flex-wrap: wrap; }
+
+  /* Card grids: single column */
+  .card-grid { grid-template-columns: 1fr; }
+  .remix-canvas-grid { grid-template-columns: 1fr; }
+
+  /* Full-width catalog search */
+  #catalog-search { width: 100% !important; }
+
+  /* Package popover: viewport-aware */
+  .package-popover { left: 1rem; right: 1rem; width: auto; }
+
+  /* Score breakdown wraps */
+  .remix-score-breakdown { flex-wrap: wrap; }
+
+  /* Tab-specific sidebars as overlays */
+  .mobile-toggle-btn { display: flex; }
+
+  #arch-content > .w-72 {
+    display: none;
+  }
+  #arch-content.show-modules > .w-72 {
+    display: block;
+    position: fixed;
+    top: 0; right: 0; bottom: 0;
+    width: 280px;
+    z-index: 45;
+    background: var(--canvas-raised);
+    border-left: 1px solid var(--border-default);
+    overflow-y: auto;
+  }
+
+  #tour-content > .w-48 {
+    display: none;
+  }
+  #tour-content.show-steps > .w-48 {
+    display: block;
+    position: fixed;
+    top: 0; left: 0; bottom: 0;
+    width: 220px;
+    z-index: 45;
+    background: var(--canvas-raised);
+    border-right: 1px solid var(--border-default);
+    overflow-y: auto;
+  }
+
+  #remix-content > .w-72:first-child {
+    display: none;
+  }
+  #remix-content.show-palette > .w-72:first-child {
+    display: block;
+    position: fixed;
+    top: 0; left: 0; bottom: 0;
+    width: 280px;
+    z-index: 45;
+    background: var(--canvas-raised);
+    border-right: 1px solid var(--border-default);
+    overflow-y: auto;
+  }
+
+  /* Font size floor */
+  .nav-section-label { font-size: 0.75rem; }
+  .confidence-badge { font-size: 0.75rem; }
+  .tour-step-list-item { font-size: 0.75rem; padding: 0.5rem; min-height: 44px; }
+  .module-item-header { min-height: 44px; }
+  .arch-ctrl-btn { font-size: 0.75rem; padding: 8px 14px; min-height: 36px; }
+  .arch-legend, .arch-stats { font-size: 0.75rem; }
+
+  /* Touch targets: 44px minimum */
+  .nav-item { min-height: 44px; padding: 0.625rem 0.75rem; }
+  .neon-btn-outlined, .neon-btn-filled { min-height: 44px; padding: 0.5rem 1rem; }
+  .result-row td { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+  input[type="checkbox"] { width: 20px; height: 20px; }
+
+  /* Architecture legend: avoid overlap with controls */
+  .arch-legend { top: auto; bottom: 48px; }
 }
