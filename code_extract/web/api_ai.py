@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -202,6 +205,13 @@ async def agent_chat_endpoint(req: AgentChatRequest):
     if dead:
         analysis_context["dead_code"] = dead
 
+    logger.info(
+        "[agent-endpoint] model=%s, code_blocks=%d, analysis_keys=%s, query=%.80s",
+        config.model.value, len(code_context),
+        list(analysis_context.keys()) if analysis_context else "none",
+        req.query,
+    )
+
     # Load agent conversation history (last N turns)
     history = state.get_analysis(req.scan_id, "agent_history") or []
 
@@ -215,9 +225,16 @@ async def agent_chat_endpoint(req: AgentChatRequest):
             analysis_context=analysis_context or None,
         )
     except Exception as e:
+        logger.exception("[agent-endpoint] error: %s", e)
         raise HTTPException(500, detail=f"AI agent error: {e}")
     finally:
         await service.close()
+
+    logger.info(
+        "[agent-endpoint] result: answer=%d chars, actions=%d, model=%s",
+        len(result.get("answer", "")), len(result.get("actions", [])),
+        result.get("model", "?"),
+    )
 
     # Update stored history (trim to last N turns)
     history_update = result.get("history_update", [])

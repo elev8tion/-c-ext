@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # Limits to keep prompts within context window
 MAX_CODE_BLOCKS = 10
 MAX_CODE_CHARS = 1000
-MAX_TOOL_ITERATIONS = 8
+MAX_TOOL_ITERATIONS = 6
 
 
 class DeepSeekService:
@@ -24,7 +24,7 @@ class DeepSeekService:
     def __init__(self, config: AIConfig | None = None):
         self.config = config or AIConfig()
         self.client = httpx.AsyncClient(
-            timeout=30.0,
+            timeout=60.0,
             headers={
                 "Authorization": f"Bearer {self.config.api_key}",
                 "Content-Type": "application/json",
@@ -134,12 +134,10 @@ class DeepSeekService:
     ) -> dict[str, Any]:
         """Run an agentic chat with tool-calling loop.
 
-        Args:
-            query: User's natural language request.
-            scan_id: Active scan session ID.
-            history: Last N conversation turns as {role, content} dicts.
-            code_context: Code blocks from the scan (same as chat endpoint).
-            analysis_context: Analysis data (health, deps, dead_code).
+        The loop executes tool calls up to MAX_TOOL_ITERATIONS times.
+        If the model produces a text answer during the loop, it's returned
+        immediately.  Otherwise a **synthesis step** makes one final API
+        call with NO tools, guaranteeing a rich text answer.
 
         Returns:
             {answer, actions, model, usage, history_update}
@@ -155,32 +153,36 @@ class DeepSeekService:
         messages.append({"role": "user", "content": query})
 
         all_actions: list[dict] = []
+        tool_trace: list[dict[str, str]] = []
         total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         model_name = self.config.model.value
 
         for iteration in range(MAX_TOOL_ITERATIONS):
-            logger.info("[agent] iteration=%d, model=%s, messages=%d",
-                        iteration, self.config.model.value, len(messages))
-
-            # On the last iteration, omit tools to force a text summary
-            # instead of another tool call that would be lost.
-            is_last = iteration == MAX_TOOL_ITERATIONS - 1
             request_body: dict[str, Any] = {
                 "model": self.config.model.value,
                 "messages": messages,
                 "temperature": self.config.temperature,
                 "max_tokens": self.config.max_tokens,
                 "stream": False,
+                "tools": TOOL_DEFINITIONS,
+                "tool_choice": "auto",
             }
-            if not is_last:
-                request_body["tools"] = TOOL_DEFINITIONS
-                request_body["tool_choice"] = "auto"
 
-            response = await self.client.post(
-                f"{self.config.base_url}/chat/completions",
-                json=request_body,
+            logger.info(
+                "iter=%d/%d messages=%d",
+                iteration, MAX_TOOL_ITERATIONS, len(messages),
             )
-            response.raise_for_status()
+
+            try:
+                response = await self.client.post(
+                    f"{self.config.base_url}/chat/completions",
+                    json=request_body,
+                )
+                response.raise_for_status()
+            except Exception as e:
+                logger.info("iter=%d API error: %s", iteration, e)
+                break
+
             data = response.json()
 
             # Accumulate usage
@@ -192,33 +194,36 @@ class DeepSeekService:
             choice = data.get("choices", [{}])[0]
             message = choice.get("message", {})
             finish_reason = choice.get("finish_reason", "stop")
+            tool_calls = message.get("tool_calls")
+            content = message.get("content") or ""
 
-            logger.info("[agent] finish_reason=%s, has_tool_calls=%s, content_len=%d",
-                        finish_reason, bool(message.get("tool_calls")),
-                        len(message.get("content") or ""))
+            logger.debug(
+                "iter=%d finish=%s tool_calls=%d content=%d chars",
+                iteration, finish_reason,
+                len(tool_calls) if tool_calls else 0, len(content),
+            )
 
             # No tool calls — we have the final answer
-            if finish_reason != "tool_calls" and not message.get("tool_calls"):
-                answer = message.get("content", "")
-                logger.info("[agent] final answer, %d chars, %d actions",
-                            len(answer), len(all_actions))
-                history_update = [
-                    {"role": "user", "content": query},
-                    {"role": "assistant", "content": answer},
-                ]
+            if finish_reason != "tool_calls" and not tool_calls:
+                logger.info(
+                    "direct answer: %d chars, %d actions",
+                    len(content), len(all_actions),
+                )
                 return {
-                    "answer": answer,
+                    "answer": content,
                     "actions": all_actions,
                     "model": model_name,
                     "usage": total_usage,
-                    "history_update": history_update,
+                    "history_update": [
+                        {"role": "user", "content": query},
+                        {"role": "assistant", "content": content},
+                    ],
                 }
 
             # Process tool calls
-            # Add the assistant message with tool_calls to conversation
             messages.append(message)
 
-            for tool_call in message.get("tool_calls", []):
+            for tool_call in (tool_calls or []):
                 fn = tool_call.get("function", {})
                 tool_name = fn.get("name", "")
                 try:
@@ -227,22 +232,34 @@ class DeepSeekService:
                     arguments = {}
 
                 tool_id = tool_call.get("id", "")
-                logger.info("[agent] tool_call: %s(%s) id=%s",
-                            tool_name, json.dumps(arguments)[:200], tool_id)
+                logger.info("tool: %s(%s)", tool_name, json.dumps(arguments)[:120])
                 result_text, actions = execute_tool(tool_name, scan_id, arguments)
-                logger.info("[agent] tool_result: %d chars, %d actions",
-                            len(result_text), len(actions))
+                logger.debug("result: %d chars, %d actions", len(result_text), len(actions))
                 all_actions.extend(actions)
 
-                # Add tool result to conversation
+                tool_trace.append({
+                    "tool": tool_name,
+                    "args": json.dumps(arguments)[:200],
+                    "result": result_text[:500],
+                })
+
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_id,
                     "content": result_text,
                 })
 
-        # Safety: max iterations reached — return whatever we have
-        answer = "I completed the available actions. Let me know if you need anything else."
+        # Loop exhausted or broke — synthesize a text answer
+        logger.info(
+            "synthesis step: %d tool calls, %d actions",
+            len(tool_trace), len(all_actions),
+        )
+        answer = await self._synthesize_answer(
+            query=query,
+            tool_trace=tool_trace,
+            system_prompt=system_prompt,
+            total_usage=total_usage,
+        )
         return {
             "answer": answer,
             "actions": all_actions,
@@ -253,6 +270,68 @@ class DeepSeekService:
                 {"role": "assistant", "content": answer},
             ],
         }
+
+    async def _synthesize_answer(
+        self,
+        query: str,
+        tool_trace: list[dict[str, str]],
+        system_prompt: str,
+        total_usage: dict[str, int],
+    ) -> str:
+        """Make a final API call with NO tools to guarantee a text answer.
+
+        Falls back to a readable summary of tool results if the call fails.
+        """
+        # Build a compact numbered list of tool results
+        trace_lines = []
+        for i, t in enumerate(tool_trace, 1):
+            trace_lines.append(
+                f"{i}. {t['tool']}({t['args'][:80]})\n   → {t['result'][:400]}"
+            )
+        trace_text = "\n".join(trace_lines) or "(no tools were called)"
+
+        synth_messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": (
+                f"Original question: {query}\n\n"
+                f"Tool results collected:\n{trace_text}\n\n"
+                "Based on these tool results, provide a comprehensive answer "
+                "to the original question. Do NOT call any tools."
+            )},
+        ]
+
+        try:
+            response = await self.client.post(
+                f"{self.config.base_url}/chat/completions",
+                json={
+                    "model": self.config.model.value,
+                    "messages": synth_messages,
+                    "temperature": self.config.temperature,
+                    "max_tokens": self.config.max_tokens,
+                    "stream": False,
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            usage = data.get("usage", {})
+            for k in total_usage:
+                total_usage[k] += usage.get(k, 0)
+
+            content = data["choices"][0]["message"].get("content", "")
+            if content:
+                logger.info("synthesis answer: %d chars", len(content))
+                return content
+        except Exception as e:
+            logger.info("synthesis API error: %s — using raw summary", e)
+
+        # Graceful degradation: return raw tool results as readable text
+        if tool_trace:
+            parts = [f"Here's what I found:\n"]
+            for t in tool_trace:
+                parts.append(f"**{t['tool']}**: {t['result'][:400]}")
+            return "\n\n".join(parts)
+        return "I wasn't able to complete the request. Please try again."
 
     def _build_agent_system_prompt(
         self,

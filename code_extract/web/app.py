@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+)
 
 from fastapi import FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles

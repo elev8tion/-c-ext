@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 try:
@@ -442,10 +443,12 @@ class TestAgentChat:
             await service.close()
         asyncio.run(_test())
 
-    def test_agent_max_iterations(self):
-        """Loop terminates at safety limit."""
+    def test_agent_synthesis_after_loop(self):
+        """After loop exhausts iterations, synthesis step produces answer."""
         async def _test():
             service = DeepSeekService(AIConfig(api_key="test-key"))
+
+            # Tool-calling response returned for every loop iteration
             loop_response = MagicMock()
             loop_response.status_code = 200
             loop_response.raise_for_status = MagicMock()
@@ -468,11 +471,90 @@ class TestAgentChat:
                 "model": "deepseek-coder",
                 "usage": {"prompt_tokens": 50, "completion_tokens": 5, "total_tokens": 55},
             }
-            service.client.post = AsyncMock(return_value=loop_response)
+
+            # Synthesis response (no tools)
+            synth_response = MagicMock()
+            synth_response.status_code = 200
+            synth_response.raise_for_status = MagicMock()
+            synth_response.json.return_value = {
+                "choices": [{
+                    "message": {"role": "assistant", "content": "Here is a synthesized answer."},
+                    "finish_reason": "stop",
+                }],
+                "model": "deepseek-coder",
+                "usage": {"prompt_tokens": 60, "completion_tokens": 20, "total_tokens": 80},
+            }
+
+            # 6 loop iterations + 1 synthesis call = 7 total
+            service.client.post = AsyncMock(
+                side_effect=[loop_response] * 6 + [synth_response],
+            )
             result = await service.agent_chat("Loop forever", "scan-1", [])
+            assert result["answer"] == "Here is a synthesized answer."
             assert "actions" in result
-            assert result["answer"]
-            assert service.client.post.call_count == 8
+            assert service.client.post.call_count == 7  # 6 loop + 1 synthesis
+            await service.close()
+        asyncio.run(_test())
+
+    def test_agent_synthesis_on_api_error(self):
+        """Synthesis fires after early loop exit from API error."""
+        async def _test():
+            service = DeepSeekService(AIConfig(api_key="test-key"))
+
+            # First call: tool call succeeds
+            tool_response = MagicMock()
+            tool_response.status_code = 200
+            tool_response.raise_for_status = MagicMock()
+            tool_response.json.return_value = {
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [{
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "search_items",
+                                "arguments": json.dumps({"query": "test"}),
+                            },
+                        }],
+                    },
+                    "finish_reason": "tool_calls",
+                }],
+                "model": "deepseek-coder",
+                "usage": {"prompt_tokens": 50, "completion_tokens": 5, "total_tokens": 55},
+            }
+
+            # Second call: API error breaks loop
+            error = httpx.HTTPStatusError(
+                "Server Error", request=MagicMock(), response=MagicMock(),
+            )
+
+            # Third call: synthesis response
+            synth_response = MagicMock()
+            synth_response.status_code = 200
+            synth_response.raise_for_status = MagicMock()
+            synth_response.json.return_value = {
+                "choices": [{
+                    "message": {"role": "assistant", "content": "Recovered after error."},
+                    "finish_reason": "stop",
+                }],
+                "model": "deepseek-coder",
+                "usage": {"prompt_tokens": 40, "completion_tokens": 15, "total_tokens": 55},
+            }
+
+            service.client.post = AsyncMock(
+                side_effect=[tool_response, error, synth_response],
+            )
+            with patch("code_extract.ai.tools.handle_search_items") as mock_search:
+                mock_search.return_value = (
+                    json.dumps({"items": [{"name": "Foo"}], "count": 1}),
+                    [],
+                )
+                result = await service.agent_chat("Search test", "scan-1", [])
+
+            assert result["answer"] == "Recovered after error."
+            assert service.client.post.call_count == 3  # 1 tool + 1 error + 1 synth
             await service.close()
         asyncio.run(_test())
 

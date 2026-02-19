@@ -3766,16 +3766,17 @@ const app = (() => {
     _aiWidgetShowTyping();
 
     try {
+      const reqBody = {
+        scan_id: currentScan.scan_id,
+        query,
+        item_ids: selectedIds.size > 0 ? [...selectedIds] : null,
+        model: $('#ai-model')?.value || 'deepseek-chat',
+        api_key: $('#ai-api-key')?.value || '',
+      };
       const res = await fetch('/api/ai/agent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          scan_id: currentScan.scan_id,
-          query,
-          item_ids: selectedIds.size > 0 ? [...selectedIds] : null,
-          model: $('#ai-model')?.value || 'deepseek-chat',
-          api_key: $('#ai-api-key')?.value || '',
-        }),
+        body: JSON.stringify(reqBody),
       });
 
       _aiWidgetHideTyping();
