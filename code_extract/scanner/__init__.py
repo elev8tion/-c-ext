@@ -9,6 +9,7 @@ from code_extract.scanner.base import BaseScanner
 from code_extract.scanner.python_scanner import PythonScanner
 from code_extract.scanner.js_scanner import JsScanner
 from code_extract.scanner.dart_scanner import DartScanner
+from code_extract.scanner.html_scanner import HtmlScanner
 
 # Try to import tree-sitter scanner; fall back to regex scanners
 _HAS_TREESITTER = False
@@ -43,6 +44,9 @@ def _get_scanners(skip_dirs: list[str] | None = None) -> list:
     if _HAS_SQL:
         scanners.append(SqlScanner(skip_dirs=skip_dirs))
 
+    # HTML scanner (stdlib only, always available)
+    scanners.append(HtmlScanner(skip_dirs=skip_dirs))
+
     return scanners
 
 
@@ -63,5 +67,6 @@ __all__ = [
     "PythonScanner",
     "JsScanner",
     "DartScanner",
+    "HtmlScanner",
     "scan_directory",
 ]

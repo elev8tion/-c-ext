@@ -84,6 +84,7 @@ def _get_filename(block: FormattedBlock) -> str:
         "swift": ".swift",
         "kotlin": ".kt",
         "csharp": ".cs",
+        "html": ".html",
     }
 
     ext = extensions.get(lang, ".txt")

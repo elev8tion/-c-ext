@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>.container { max-width: 800px; }</style>
+  <script src="external.js"></script>
+</head>
+<body>
+  <script>
+    class AppRouter {
+      constructor() { this.routes = {}; }
+      addRoute(path, handler) { this.routes[path] = handler; }
+    }
+    function initApp() {
+      const router = new AppRouter();
+    }
+    const UserList = (users) => {
+      return users.map(u => u.name);
+    };
+  </script>
+  <script type="application/json">{"config": true}</script>
+  <script></script>
+</body>
+</html>

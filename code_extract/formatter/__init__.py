@@ -31,6 +31,7 @@ _FORMATTERS: dict[Language, BaseFormatter] = {
     Language.SWIFT: _generic,
     Language.KOTLIN: _generic,
     Language.CSHARP: _generic,
+    Language.HTML: _generic,
 }
 
 if _sql_formatter is not None:

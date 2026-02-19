@@ -6,6 +6,7 @@ from code_extract.models import ExtractedBlock, Language, ScannedItem
 from code_extract.extractor.base import BaseExtractor
 from code_extract.extractor.dart_extractor import DartExtractor
 from code_extract.extractor.js_extractor import JsExtractor
+from code_extract.extractor.html_extractor import HtmlExtractor
 from code_extract.extractor.python_extractor import PythonExtractor
 
 # Try tree-sitter extractor
@@ -27,6 +28,7 @@ except ImportError:
 # Languages that always use their own extractor
 _EXTRACTORS: dict[Language, BaseExtractor] = {
     Language.PYTHON: PythonExtractor(),
+    Language.HTML: HtmlExtractor(),
 }
 
 # Languages that fall back to regex extractors if tree-sitter unavailable
@@ -81,5 +83,6 @@ __all__ = [
     "PythonExtractor",
     "JsExtractor",
     "DartExtractor",
+    "HtmlExtractor",
     "extract_item",
 ]

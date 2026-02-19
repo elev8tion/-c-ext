@@ -23,6 +23,7 @@ _EXTENSIONS: dict[Language, str] = {
     Language.KOTLIN: ".kt",
     Language.CSHARP: ".cs",
     Language.SQL: ".sql",
+    Language.HTML: ".html",
 }
 
 # Subdirectory names per language
@@ -40,6 +41,7 @@ _SUBDIRS: dict[Language, str] = {
     Language.KOTLIN: "kotlin",
     Language.CSHARP: "csharp",
     Language.SQL: "sql",
+    Language.HTML: "html",
 }
 
 
@@ -85,14 +87,20 @@ def _build_file_content(block: FormattedBlock, lang: Language) -> str:
 
     # Add header as comment
     if block.header:
-        if lang == Language.SQL:
+        if lang == Language.HTML:
+            parts.append(f"<!-- {block.header} -->")
+        elif lang == Language.SQL:
             comment_prefix = "--"
+            for line in block.header.splitlines():
+                parts.append(f"{comment_prefix} {line}")
         elif lang in (Language.PYTHON, Language.RUBY):
             comment_prefix = "#"
+            for line in block.header.splitlines():
+                parts.append(f"{comment_prefix} {line}")
         else:
             comment_prefix = "//"
-        for line in block.header.splitlines():
-            parts.append(f"{comment_prefix} {line}")
+            for line in block.header.splitlines():
+                parts.append(f"{comment_prefix} {line}")
         parts.append("")
 
     parts.append(block.source_code)
@@ -183,6 +191,16 @@ def _write_index_file(
         for block in blocks:
             module = _safe_filename(block.item.name)
             lines.append(f"\\i {module}.sql")
+        lines.append("")
+        index_path.write_text("\n".join(lines), encoding="utf-8")
+
+    elif lang == Language.HTML:
+        index_path = subdir / "index.html"
+        lines = ["<!-- Extracted HTML blocks -->", "<ul>"]
+        for block in blocks:
+            module = _safe_filename(block.item.name)
+            lines.append(f'  <li><a href="{module}.html">{block.item.name}</a></li>')
+        lines.append("</ul>")
         lines.append("")
         index_path.write_text("\n".join(lines), encoding="utf-8")
 

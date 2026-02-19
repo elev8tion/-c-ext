@@ -69,3 +69,5 @@ def test_scan_directory():
     # JS and Dart should be found by either tree-sitter or regex scanner
     assert Language.JAVASCRIPT in languages or Language.TYPESCRIPT in languages
     assert Language.DART in languages
+    # HTML should be found by HtmlScanner
+    assert Language.HTML in languages

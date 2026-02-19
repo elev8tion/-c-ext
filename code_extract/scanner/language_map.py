@@ -27,10 +27,12 @@ EXT_TO_LANGUAGE: dict[str, tuple[Language, str]] = {
     ".kts": (Language.KOTLIN, "kotlin"),
     ".cs": (Language.CSHARP, "csharp"),
     ".sql": (Language.SQL, "sql"),
+    ".html": (Language.HTML, "html"),
+    ".htm": (Language.HTML, "html"),
 }
 
 # Extensions handled by tree-sitter (excludes Python which uses stdlib ast)
 TREESITTER_EXTENSIONS: set[str] = {
     ext for ext, (lang, _) in EXT_TO_LANGUAGE.items()
-    if lang != Language.PYTHON and lang != Language.SQL
+    if lang not in (Language.PYTHON, Language.SQL, Language.HTML)
 }

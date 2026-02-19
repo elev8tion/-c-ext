@@ -47,6 +47,7 @@ const app = (() => {
     java: 'jvm', kotlin: 'jvm',
     python: 'python', dart: 'dart', rust: 'rust', go: 'go',
     cpp: 'cpp', ruby: 'ruby', swift: 'swift', csharp: 'csharp', sql: 'sql',
+    html: 'js_ts',
   };
   const REMIX_SQL_TYPES = new Set([
     'table', 'view', 'trigger', 'policy', 'migration', 'index', 'sql_function',
@@ -86,6 +87,8 @@ const app = (() => {
     migration:    { bg: 'rgba(139,92,246,0.12)', text: '#8b5cf6' },
     policy:       { bg: 'rgba(232,121,249,0.12)', text: '#e879f9' },
     provider:     { bg: 'rgba(99,102,241,0.12)', text: '#818cf8' },
+    script_block: { bg: 'rgba(251,191,36,0.12)', text: '#fbbf24' },
+    style_block:  { bg: 'rgba(232,121,249,0.12)', text: '#e879f9' },
   };
 
   // --- Language colors ---
@@ -866,7 +869,9 @@ const app = (() => {
     component: '#79c0ff',
     function:  '#7ee787',
     method:    '#ffa657',
-    overflow:  '#484f58',
+    overflow:      '#484f58',
+    script_block:  '#fbbf24',
+    style_block:   '#e879f9',
   };
 
   async function loadArchitecture() {

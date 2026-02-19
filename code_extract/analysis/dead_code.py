@@ -43,6 +43,11 @@ def detect_dead_code(graph: DependencyGraph) -> list[dict]:
             confidence = 0.3
             reason = "Appears to be a test"
 
+        # HTML structural blocks are containers, not independently referenced
+        if node.block_type in ("script_block", "style_block"):
+            confidence = 0.2
+            reason = "HTML structural block"
+
         # Methods are expected to be called externally
         if node.block_type == "method":
             confidence = min(confidence, 0.5)

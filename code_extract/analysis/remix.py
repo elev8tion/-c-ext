@@ -25,6 +25,7 @@ LANGUAGE_GROUPS: dict[str, str] = {
     "swift": "swift",
     "csharp": "csharp",
     "sql": "sql",
+    "html": "js_ts",
 }
 
 SQL_BLOCK_TYPES: set[str] = {

@@ -21,6 +21,7 @@ class Language(enum.Enum):
     KOTLIN = "kotlin"
     CSHARP = "csharp"
     SQL = "sql"
+    HTML = "html"
 
 
 class CodeBlockType(enum.Enum):
@@ -43,6 +44,8 @@ class CodeBlockType(enum.Enum):
     INDEX = "index"
     MIGRATION = "migration"
     POLICY = "policy"
+    SCRIPT_BLOCK = "script_block"
+    STYLE_BLOCK = "style_block"
 
 
 @dataclass
