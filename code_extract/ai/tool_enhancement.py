@@ -386,9 +386,13 @@ class ToolValidator:
             if param_name in metadata.parameters:
                 expected_type = metadata.parameters[param_name].get("type", "Any")
                 if expected_type != "Any" and expected_type != "any":
-                    # Basic type checking - in production would use proper type validation
+                    # Basic type checking - extract name from "<class 'int'>" format
                     actual_type = type(value).__name__
-                    if expected_type.lower() != actual_type.lower():
+                    # Normalize expected_type: "<class 'int'>" -> "int"
+                    normalized_expected = expected_type
+                    if normalized_expected.startswith("<class '") and normalized_expected.endswith("'>"):
+                        normalized_expected = normalized_expected[8:-2]
+                    if normalized_expected.lower() != actual_type.lower():
                         errors.append(
                             f"Parameter '{param_name}' expects {expected_type}, got {actual_type}"
                         )
