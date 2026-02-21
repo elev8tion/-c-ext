@@ -674,3 +674,169 @@ class TestAgentAPI:
 
         res = client.get(f"/api/ai/agent/history/{scan_id}")
         assert res.json()["history"] == []
+
+
+# ── Reasoner Model Tests (F2) ─────────────────────────────────────
+
+class TestReasonerChat:
+    def test_reasoner_skips_tools(self):
+        """Reasoner model should not use tools — single-shot response."""
+        async def _test():
+            config = AIConfig(api_key="test-key", model=AIModel.DEEPSEEK_REASONER)
+            service = DeepSeekService(config)
+
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.raise_for_status = MagicMock()
+            mock_response.json.return_value = {
+                "choices": [{
+                    "message": {"role": "assistant", "content": "Reasoner analysis."},
+                    "finish_reason": "stop",
+                }],
+                "model": "deepseek-reasoner",
+                "usage": {"prompt_tokens": 200, "completion_tokens": 50, "total_tokens": 250},
+            }
+            service.client.post = AsyncMock(return_value=mock_response)
+
+            result = await service.agent_chat("Analyze this code", "scan-1", [])
+
+            assert result["answer"] == "Reasoner analysis."
+            assert result["actions"] == []
+            assert result["tool_calls_made"] == 0
+            assert result["model"] == "deepseek-reasoner"
+            await service.close()
+
+        asyncio.run(_test())
+
+
+# ── Context Size Tests (F7) ──────────────────────────────────────
+
+class TestContextSize:
+    def test_context_size_in_result(self):
+        """Agent result should include context_size."""
+        async def _test():
+            service = DeepSeekService(AIConfig(api_key="test-key"))
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.raise_for_status = MagicMock()
+            mock_response.json.return_value = {
+                "choices": [{
+                    "message": {"role": "assistant", "content": "Answer."},
+                    "finish_reason": "stop",
+                }],
+                "model": "deepseek-chat",
+                "usage": {"prompt_tokens": 50, "completion_tokens": 10, "total_tokens": 60},
+            }
+            service.client.post = AsyncMock(return_value=mock_response)
+            result = await service.agent_chat("test", "scan-1", [])
+            assert "context_size" in result
+            assert isinstance(result["context_size"], int)
+            assert result["context_size"] > 0
+            assert "context_unit" in result
+            assert result["context_unit"] in ("tokens", "chars_estimated")
+            await service.close()
+
+        asyncio.run(_test())
+
+    def test_tool_calls_made_count(self):
+        """Agent result should count tool calls made."""
+        async def _test():
+            service = DeepSeekService(AIConfig(api_key="test-key"))
+
+            tool_response = MagicMock()
+            tool_response.status_code = 200
+            tool_response.raise_for_status = MagicMock()
+            tool_response.json.return_value = {
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [{
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "navigate_to_tab",
+                                "arguments": json.dumps({"tab_name": "health"}),
+                            },
+                        }],
+                    },
+                    "finish_reason": "tool_calls",
+                }],
+                "model": "deepseek-chat",
+                "usage": {"prompt_tokens": 50, "completion_tokens": 5, "total_tokens": 55},
+            }
+            final_response = MagicMock()
+            final_response.status_code = 200
+            final_response.raise_for_status = MagicMock()
+            final_response.json.return_value = {
+                "choices": [{
+                    "message": {"role": "assistant", "content": "Done."},
+                    "finish_reason": "stop",
+                }],
+                "model": "deepseek-chat",
+                "usage": {"prompt_tokens": 60, "completion_tokens": 10, "total_tokens": 70},
+            }
+            service.client.post = AsyncMock(side_effect=[tool_response, final_response])
+            result = await service.agent_chat("Show health", "scan-1", [])
+            assert result["tool_calls_made"] == 1
+            await service.close()
+
+        asyncio.run(_test())
+
+    def test_token_budget_forces_synthesis(self):
+        """When messages exceed token budget, loop should break for synthesis."""
+        async def _test():
+            service = DeepSeekService(AIConfig(api_key="test-key"))
+
+            # Create a tool response that adds a LOT of content to messages
+            big_content = "x" * 500000  # Will push tokens over budget
+
+            tool_response = MagicMock()
+            tool_response.status_code = 200
+            tool_response.raise_for_status = MagicMock()
+            tool_response.json.return_value = {
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [{
+                            "id": "call_big",
+                            "type": "function",
+                            "function": {
+                                "name": "search_items",
+                                "arguments": json.dumps({"query": "all"}),
+                            },
+                        }],
+                    },
+                    "finish_reason": "tool_calls",
+                }],
+                "model": "deepseek-chat",
+                "usage": {"prompt_tokens": 50, "completion_tokens": 5, "total_tokens": 55},
+            }
+
+            synth_response = MagicMock()
+            synth_response.status_code = 200
+            synth_response.raise_for_status = MagicMock()
+            synth_response.json.return_value = {
+                "choices": [{
+                    "message": {"role": "assistant", "content": "Synthesized after budget."},
+                    "finish_reason": "stop",
+                }],
+                "model": "deepseek-chat",
+                "usage": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120},
+            }
+
+            service.client.post = AsyncMock(
+                side_effect=[tool_response, synth_response],
+            )
+
+            with patch("code_extract.ai.tools.handle_search_items") as mock_search:
+                mock_search.return_value = (big_content, [])
+                result = await service.agent_chat("Find everything", "scan-1", [])
+
+            assert result["answer"] == "Synthesized after budget."
+            # Should have only made 2 API calls: 1 tool iteration + 1 synthesis
+            assert service.client.post.call_count == 2
+            await service.close()
+
+        asyncio.run(_test())

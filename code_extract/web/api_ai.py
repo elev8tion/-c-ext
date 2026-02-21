@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import threading
+from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from code_extract.web.state import state
@@ -16,8 +20,48 @@ from code_extract.web.state import state
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
 
+# ── Config persistence (F8) ──────────────────────────────────────────
+
+_CONFIG_DIR = Path.home() / ".code-extract"
+_CONFIG_FILE = _CONFIG_DIR / ".chat_config.json"
+
+
+def _load_ai_config() -> dict:
+    """Load persisted AI config from disk."""
+    try:
+        if _CONFIG_FILE.exists():
+            return json.loads(_CONFIG_FILE.read_text())
+    except Exception:
+        pass
+    return {}
+
+
+def _save_ai_config(data: dict) -> None:
+    """Write AI config to disk."""
+    _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    _CONFIG_FILE.write_text(json.dumps(data, indent=2))
+
+
+# ── Rate limiting (F9) ───────────────────────────────────────────────
+
+def _check_rate_limit(scan_id: str) -> None:
+    """Raise 429 if rate limit exceeded for this scan."""
+    from code_extract.ai.rate_limiter import get_rate_limiter
+    limiter = get_rate_limiter()
+    allowed, retry_after = limiter.check(scan_id)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded. Try again later.",
+            headers={"Retry-After": str(int(retry_after + 1))},
+        )
+
+
+# ── Health-aware item scoring (F6) ───────────────────────────────────
+
 def _select_relevant_items(
-    blocks: dict, query: str, limit: int = 20
+    blocks: dict, query: str, limit: int = 20,
+    analysis_context: dict | None = None,
 ) -> list[str]:
     """Score items by relevance to the query, return top *limit* IDs."""
     if not blocks or not query:
@@ -26,6 +70,25 @@ def _select_relevant_items(
     query_lower = query.lower()
     words = query_lower.split()
     scored: list[tuple[str, float]] = []
+
+    # Build set of problematic names from analysis context (F6)
+    problematic_names: set[str] = set()
+    if analysis_context:
+        health = analysis_context.get("health")
+        if isinstance(health, dict):
+            for fn in health.get("long_functions", []):
+                if isinstance(fn, dict) and fn.get("name"):
+                    problematic_names.add(fn["name"].lower())
+            for c in health.get("high_coupling", []):
+                if isinstance(c, dict) and c.get("name"):
+                    problematic_names.add(c["name"].lower())
+        dead = analysis_context.get("dead_code")
+        if isinstance(dead, list):
+            for item in dead:
+                if isinstance(item, dict):
+                    for key in ("qualified_name", "name"):
+                        if item.get(key):
+                            problematic_names.add(item[key].lower())
 
     for item_id, block in blocks.items():
         score = 0.1  # baseline
@@ -43,6 +106,13 @@ def _select_relevant_items(
                 score += 1
             if w in fpath:
                 score += 3
+
+        # Health-aware bonus (F6)
+        if problematic_names:
+            item_name = (block.item.qualified_name or block.item.name or "").lower()
+            if item_name in problematic_names or block.item.name.lower() in problematic_names:
+                score += 3
+
         scored.append((item_id, score))
 
     scored.sort(key=lambda x: x[1], reverse=True)
@@ -97,6 +167,14 @@ def _build_analysis_context(scan_id: str) -> dict:
     return ctx
 
 
+def _resolve_config_key(config) -> None:
+    """If config has no API key, try loading from persisted config (F8 fallback)."""
+    if not config.api_key:
+        saved = _load_ai_config()
+        if saved.get("api_key"):
+            config.api_key = saved["api_key"]
+
+
 # ── Lazy tool system singleton ──────────────────────────────────────
 
 _tool_system_lock = threading.Lock()
@@ -148,11 +226,66 @@ class AgentChatRequest(BaseModel):
     api_key: Optional[str] = None
 
 
+class AIConfigUpdate(BaseModel):
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+
+
+class StructuredAnalysisRequest(BaseModel):
+    scan_id: str
+    focus: Optional[str] = None  # "health", "architecture", "dead_code"
+    item_ids: Optional[list[str]] = None
+    model: Optional[str] = None
+    api_key: Optional[str] = None
+
+
+# ── Config endpoints (F8) ────────────────────────────────────────────
+
+@router.get("/config")
+async def get_ai_config():
+    """Get saved AI config (never exposes raw API key)."""
+    saved = _load_ai_config()
+    return {
+        "api_key_set": bool(saved.get("api_key")),
+        "selected_model": saved.get("model", "deepseek-chat"),
+    }
+
+
+@router.post("/config")
+async def update_ai_config(req: AIConfigUpdate):
+    """Save AI config to disk."""
+    from code_extract.ai import AIModel
+
+    saved = _load_ai_config()
+
+    if req.api_key and req.api_key != "KEEP_EXISTING":
+        saved["api_key"] = req.api_key
+
+    if req.model:
+        # Validate model name
+        try:
+            AIModel(req.model)
+            saved["model"] = req.model
+        except ValueError:
+            raise HTTPException(400, detail=f"Invalid model: {req.model}")
+
+    _save_ai_config(saved)
+    return {
+        "api_key_set": bool(saved.get("api_key")),
+        "selected_model": saved.get("model", "deepseek-chat"),
+    }
+
+
+# ── Chat endpoint ────────────────────────────────────────────────────
+
 @router.post("/chat")
 async def chat_with_scan(req: ChatRequest):
     """Chat about code from a specific scan."""
     from code_extract.ai import AIConfig, AIModel
     from code_extract.ai.service import DeepSeekService
+    from code_extract.ai.token_utils import estimate_tokens
+
+    _check_rate_limit(req.scan_id)
 
     # Validate scan exists
     scan = state.scans.get(req.scan_id)
@@ -167,18 +300,27 @@ async def chat_with_scan(req: ChatRequest):
         except ValueError:
             pass
 
+    _resolve_config_key(config)
+
     if not config.api_key:
         raise HTTPException(
             503,
             detail="DeepSeek API key not configured. Set the DEEPSEEK_API_KEY environment variable.",
         )
 
+    # Build analysis context first (needed for health-aware scoring)
+    analysis_context = {}
+    if req.include_analysis:
+        analysis_context = _build_analysis_context(req.scan_id)
+
     # Build code context from extracted blocks
     blocks = state.get_blocks_for_scan(req.scan_id)
     code_context = []
 
     if blocks:
-        items_to_include = req.item_ids or _select_relevant_items(blocks, req.query)
+        items_to_include = req.item_ids or _select_relevant_items(
+            blocks, req.query, analysis_context=analysis_context,
+        )
         for item_id in items_to_include:
             block = blocks.get(item_id)
             if not block:
@@ -193,10 +335,14 @@ async def chat_with_scan(req: ChatRequest):
                 "code": block.source_code[:limit],
             })
 
-    # Build analysis context
-    analysis_context = {}
-    if req.include_analysis:
-        analysis_context = _build_analysis_context(req.scan_id)
+    # Estimate context size (F7)
+    context_text = " ".join(b.get("code", "") for b in code_context)
+    context_text += " " + req.query
+    if analysis_context:
+        context_text += " " + json.dumps(analysis_context, default=str)[:2000]
+    context_size = estimate_tokens(context_text)
+    from code_extract.ai.token_utils import has_tiktoken
+    context_unit = "tokens" if has_tiktoken() else "chars_estimated"
 
     # Call DeepSeek
     service = DeepSeekService(config)
@@ -232,6 +378,8 @@ async def chat_with_scan(req: ChatRequest):
         "answer": answer,
         "model": response.get("model", config.model.value),
         "usage": response.get("usage", {}),
+        "context_size": context_size,
+        "context_unit": context_unit,
     }
 
 
@@ -260,6 +408,8 @@ async def agent_chat_endpoint(req: AgentChatRequest):
     from code_extract.ai import AIConfig, AIModel
     from code_extract.ai.service import DeepSeekService
 
+    _check_rate_limit(req.scan_id)
+
     scan = state.scans.get(req.scan_id)
     if not scan:
         raise HTTPException(404, detail="Scan session not found")
@@ -271,9 +421,10 @@ async def agent_chat_endpoint(req: AgentChatRequest):
         except ValueError:
             pass
     else:
-        # Agent needs deepseek-chat for tool-calling support;
-        # deepseek-coder is a completion model that ignores tools.
+        # Default to deepseek-chat for tool-calling support
         config.model = AIModel.DEEPSEEK_CHAT
+
+    _resolve_config_key(config)
 
     if not config.api_key:
         raise HTTPException(
@@ -281,11 +432,16 @@ async def agent_chat_endpoint(req: AgentChatRequest):
             detail="DeepSeek API key not configured. Set the DEEPSEEK_API_KEY environment variable.",
         )
 
+    # Build analysis context first (for health-aware scoring)
+    analysis_context = _build_analysis_context(req.scan_id)
+
     # Build code context
     blocks = state.get_blocks_for_scan(req.scan_id)
     code_context = []
     if blocks:
-        items_to_include = req.item_ids or _select_relevant_items(blocks, req.query)
+        items_to_include = req.item_ids or _select_relevant_items(
+            blocks, req.query, analysis_context=analysis_context,
+        )
         for item_id in items_to_include:
             block = blocks.get(item_id)
             if not block:
@@ -299,9 +455,6 @@ async def agent_chat_endpoint(req: AgentChatRequest):
                 "file": str(block.item.file_path),
                 "code": block.source_code[:limit],
             })
-
-    # Build analysis context
-    analysis_context = _build_analysis_context(req.scan_id)
 
     logger.info(
         "[agent-endpoint] model=%s, code_blocks=%d, analysis_keys=%s, query=%.80s",
@@ -339,6 +492,16 @@ async def agent_chat_endpoint(req: AgentChatRequest):
         result.get("model", "?"),
     )
 
+    # Track context size in tool system health (F7)
+    if tool_system:
+        try:
+            tool_system.health.update_metric(
+                "ai_context_size", result.get("context_size", 0),
+                "tokens", warning_threshold=80000, critical_threshold=110000,
+            )
+        except Exception:
+            pass
+
     # Update stored history (trim to last N turns)
     history_update = result.get("history_update", [])
     updated_history = history + history_update
@@ -353,6 +516,9 @@ async def agent_chat_endpoint(req: AgentChatRequest):
         "actions": result["actions"],
         "model": result["model"],
         "usage": result["usage"],
+        "context_size": result.get("context_size"),
+        "context_unit": result.get("context_unit"),
+        "tool_calls_made": result.get("tool_calls_made"),
     }
 
 
@@ -368,3 +534,88 @@ async def clear_agent_history(scan_id: str):
     """Clear agent conversation history for a scan."""
     state.store_analysis(scan_id, "agent_history", [])
     return {"cleared": True}
+
+
+# ── Structured Analysis (F4) ─────────────────────────────────────────
+
+@router.post("/structured")
+async def structured_analysis(req: StructuredAnalysisRequest):
+    """Structured JSON analysis — returns issues and recommendations."""
+    from code_extract.ai import AIConfig, AIModel
+    from code_extract.ai.service import DeepSeekService
+
+    _check_rate_limit(req.scan_id)
+
+    scan = state.scans.get(req.scan_id)
+    if not scan:
+        raise HTTPException(404, detail="Scan session not found")
+
+    config = AIConfig(api_key=req.api_key or "")
+    if req.model:
+        try:
+            config.model = AIModel(req.model)
+        except ValueError:
+            pass
+
+    _resolve_config_key(config)
+
+    if not config.api_key:
+        raise HTTPException(
+            503,
+            detail="DeepSeek API key not configured. Set the DEEPSEEK_API_KEY environment variable.",
+        )
+
+    # Build code context (top 10 items relevant to focus)
+    blocks = state.get_blocks_for_scan(req.scan_id)
+    code_context = []
+    if blocks:
+        query_hint = req.focus or "health architecture quality"
+        items_to_include = req.item_ids or _select_relevant_items(
+            blocks, query_hint, limit=10,
+        )
+        for item_id in items_to_include:
+            block = blocks.get(item_id)
+            if not block:
+                continue
+            code_context.append({
+                "name": block.item.qualified_name,
+                "type": block.item.block_type.value,
+                "language": block.item.language.value,
+                "file": str(block.item.file_path),
+                "code": block.source_code[:2000],
+            })
+
+    analysis_context = _build_analysis_context(req.scan_id)
+
+    tool_system, intelligence = _get_tool_system()
+    service = DeepSeekService(
+        config,
+        tool_system=tool_system,
+        intelligence=intelligence,
+    )
+    try:
+        result = await service.structured_analyze(
+            scan_id=req.scan_id,
+            code_context=code_context,
+            analysis_context=analysis_context or None,
+            focus=req.focus,
+        )
+    except Exception as e:
+        logger.exception("[structured] error: %s", e)
+        raise HTTPException(500, detail=f"Structured analysis error: {e}")
+    finally:
+        await service.close()
+
+    # Record in intelligence layer
+    if intelligence:
+        try:
+            intelligence.record_tool_usage(
+                tool_name="structured_analyze",
+                parameters={"focus": req.focus},
+                execution_time=0,
+                success=True,
+            )
+        except Exception:
+            pass
+
+    return result

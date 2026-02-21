@@ -13,6 +13,14 @@ class AIModel(Enum):
     DEEPSEEK_REASONER = "deepseek-reasoner"
 
 
+OPTIMAL_TEMPS: dict[str, float] = {
+    "deepseek-chat": 0.7,
+    "deepseek-coder": 0.7,
+    "deepseek-reasoner": 0.6,
+}
+TOOL_TEMP_REDUCTION = 0.2
+
+
 @dataclass
 class AIConfig:
     api_key: str = ""
@@ -24,6 +32,14 @@ class AIConfig:
     def __post_init__(self):
         if not self.api_key:
             self.api_key = os.getenv("DEEPSEEK_API_KEY", "")
+
+    def get_optimal_temperature(self) -> float:
+        """Lookup optimal temperature for the current model."""
+        return OPTIMAL_TEMPS.get(self.model.value, 0.7)
+
+    def get_tool_temperature(self) -> float:
+        """Lower temperature for precise tool selection."""
+        return max(0.1, self.get_optimal_temperature() - TOOL_TEMP_REDUCTION)
 
 
 # Phase 1: Centralized Tool Registry & Execution Engine
@@ -74,3 +90,9 @@ from .tool_bridge import (
     get_openai_tool_definitions,
     create_integrated_tool_system,
 )
+
+# Token utilities
+from .token_utils import estimate_tokens, truncate_to_tokens, estimate_messages_tokens, has_tiktoken
+
+# Rate limiting
+from .rate_limiter import RateLimiter, get_rate_limiter

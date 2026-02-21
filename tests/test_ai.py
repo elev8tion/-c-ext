@@ -202,3 +202,137 @@ class TestAIChatAPI:
         # Verify it's cleared
         res = client.get(f"/api/ai/history/{scan_id}")
         assert res.json()["history"] == []
+
+
+# ── Per-Model Temperature Tests (F3) ─────────────────────────────
+
+class TestPerModelTemperature:
+    def test_optimal_temperature_chat(self):
+        config = AIConfig(api_key="test", model=AIModel.DEEPSEEK_CHAT)
+        assert config.get_optimal_temperature() == 0.7
+
+    def test_optimal_temperature_coder(self):
+        config = AIConfig(api_key="test", model=AIModel.DEEPSEEK_CODER)
+        assert config.get_optimal_temperature() == 0.7
+
+    def test_optimal_temperature_reasoner(self):
+        config = AIConfig(api_key="test", model=AIModel.DEEPSEEK_REASONER)
+        assert config.get_optimal_temperature() == 0.6
+
+    def test_tool_temperature_lower(self):
+        config = AIConfig(api_key="test", model=AIModel.DEEPSEEK_CHAT)
+        assert config.get_tool_temperature() < config.get_optimal_temperature()
+        assert abs(config.get_tool_temperature() - 0.5) < 0.01
+
+    def test_tool_temperature_min_clamp(self):
+        config = AIConfig(api_key="test", model=AIModel.DEEPSEEK_REASONER)
+        assert config.get_tool_temperature() >= 0.1
+
+
+# ── Sandwich Prompt Structure Tests (F5) ──────────────────────────
+
+class TestSandwichPrompt:
+    def test_system_prompt_starts_with_identity(self):
+        service = DeepSeekService(AIConfig(api_key="test"))
+        prompt = service._build_system_prompt([], None)
+        assert prompt.startswith("You are an expert")
+
+    def test_system_prompt_ends_with_guidelines(self):
+        service = DeepSeekService(AIConfig(api_key="test"))
+        prompt = service._build_system_prompt([], None)
+        assert "Response Guidelines" in prompt
+        # Guidelines should appear after the identity section
+        identity_pos = prompt.find("expert software engineer")
+        guidelines_pos = prompt.find("Response Guidelines")
+        assert guidelines_pos > identity_pos
+
+    def test_agent_prompt_ends_with_format(self):
+        service = DeepSeekService(AIConfig(api_key="test"))
+        prompt = service._build_agent_system_prompt()
+        lines = prompt.strip().split("\n")
+        # Last substantive lines should be format instructions
+        tail = "\n".join(lines[-10:])
+        assert "Response Format" in tail or "Guidelines" in tail
+
+    def test_important_reference_instruction(self):
+        service = DeepSeekService(AIConfig(api_key="test"))
+        prompt = service._build_system_prompt([], None)
+        assert "IMPORTANT: Always reference code by name and file path" in prompt
+
+
+# ── Model-Specific Prompting Tests (F2) ──────────────────────────
+
+class TestModelSpecificPrompting:
+    def test_coder_file_path_emphasis(self):
+        service = DeepSeekService(AIConfig(api_key="test"))
+        code_context = [{
+            "name": "my_func",
+            "type": "function",
+            "language": "python",
+            "file": "src/main.py",
+            "code": "def my_func(): pass",
+        }]
+        prompt = service._build_system_prompt(code_context, None, model="deepseek-coder")
+        assert "### File: src/main.py" in prompt
+        assert "code structure" in prompt.lower()
+
+    def test_non_coder_standard_format(self):
+        service = DeepSeekService(AIConfig(api_key="test"))
+        code_context = [{
+            "name": "my_func",
+            "type": "function",
+            "language": "python",
+            "file": "src/main.py",
+            "code": "def my_func(): pass",
+        }]
+        prompt = service._build_system_prompt(code_context, None, model="deepseek-chat")
+        assert "### 1. my_func" in prompt
+
+    def test_reasoner_no_system_message(self):
+        service = DeepSeekService(AIConfig(
+            api_key="test", model=AIModel.DEEPSEEK_REASONER,
+        ))
+        messages = service._build_messages("What does this do?", [], None)
+        # Reasoner should NOT have a system message
+        assert all(m["role"] != "system" for m in messages)
+        # Should have user message with system content folded in
+        assert len(messages) == 1
+        assert messages[0]["role"] == "user"
+
+
+# ── Health-Aware Scoring Tests (F6) ──────────────────────────────
+
+class TestHealthAwareScoring:
+    def test_health_scoring_boosts_problematic(self):
+        from code_extract.web.api_ai import _select_relevant_items
+        from code_extract.models import CodeBlockType, Language, ScannedItem, ExtractedBlock
+
+        # Create mock blocks
+        blocks = {}
+        for name in ["clean_func", "buggy_func", "other_func"]:
+            item = ScannedItem(
+                name=name,
+                block_type=CodeBlockType.FUNCTION,
+                language=Language.PYTHON,
+                file_path=Path(f"test/{name}.py"),
+                line_number=1,
+                end_line=10,
+            )
+            block = ExtractedBlock(item=item, source_code=f"def {name}(): pass")
+            blocks[f"test/{name}.py:1"] = block
+
+        # Without analysis — all have similar scores for query "func"
+        ids_no_health = _select_relevant_items(blocks, "func")
+
+        # With analysis that flags buggy_func
+        analysis = {
+            "health": {
+                "long_functions": [{"name": "buggy_func", "line_count": 200}],
+                "high_coupling": [],
+            },
+            "dead_code": [],
+        }
+        ids_with_health = _select_relevant_items(blocks, "func", analysis_context=analysis)
+
+        # buggy_func should be boosted in scoring with health context
+        assert "test/buggy_func.py:1" in ids_with_health

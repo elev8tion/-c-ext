@@ -3882,6 +3882,9 @@ const app = (() => {
       _aiWidgetAddMessage('assistant', data.answer, {
         model: data.model,
         usage: data.usage,
+        context_size: data.context_size,
+        context_unit: data.context_unit,
+        tool_calls_made: data.tool_calls_made,
       });
 
       // Play actions if any
@@ -4036,7 +4039,18 @@ const app = (() => {
         ${role === 'assistant' ? `<button class="ai-msg-copy-btn" onclick="app.aiCopyMessage('${msgId}')">Copy</button>` : ''}
       </div>
       <div class="ai-message-content">${rendered}</div>
-      ${meta?.usage ? `<div class="ai-message-footer">${meta.usage.total_tokens || 0} tokens</div>` : ''}
+      ${meta ? (() => {
+        const parts = [];
+        if (meta.model) parts.push(meta.model);
+        if (meta.context_size) {
+          const size = meta.context_size >= 1000 ? (meta.context_size / 1000).toFixed(1) + 'k' : meta.context_size;
+          parts.push(size + ' ' + (meta.context_unit === 'chars_estimated' ? 'chars~' : 'tokens'));
+        } else if (meta.usage?.total_tokens) {
+          parts.push(meta.usage.total_tokens + ' tokens');
+        }
+        if (meta.tool_calls_made) parts.push(meta.tool_calls_made + ' tool calls');
+        return parts.length ? `<div class="ai-message-footer">${parts.join(' \u00b7 ')}</div>` : '';
+      })() : ''}
     </div>`;
 
     container.insertAdjacentHTML('beforeend', html);

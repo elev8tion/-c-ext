@@ -9,7 +9,8 @@ from typing import Any
 
 import httpx
 
-from . import AIConfig
+from . import AIConfig, AIModel
+from .token_utils import estimate_messages_tokens, has_tiktoken
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +63,7 @@ class DeepSeekService:
             json={
                 "model": self.config.model.value,
                 "messages": messages,
-                "temperature": self.config.temperature,
+                "temperature": self.config.get_optimal_temperature(),
                 "max_tokens": self.config.max_tokens,
                 "stream": False,
             },
@@ -77,7 +78,14 @@ class DeepSeekService:
         analysis_context: dict[str, Any] | None,
     ) -> list[dict[str, str]]:
         """Build context-aware message list for the API."""
-        system_prompt = self._build_system_prompt(code_context, analysis_context)
+        model_value = self.config.model.value
+        # Reasoner cannot use system messages — fold into user message
+        if self.config.model == AIModel.DEEPSEEK_REASONER:
+            system_prompt = self._build_system_prompt(code_context, analysis_context, model=model_value)
+            return [
+                {"role": "user", "content": f"{system_prompt}\n\n---\n\n{query}"},
+            ]
+        system_prompt = self._build_system_prompt(code_context, analysis_context, model=model_value)
         return [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": query},
@@ -200,21 +208,21 @@ class DeepSeekService:
         self,
         code_context: list[dict[str, Any]],
         analysis_context: dict[str, Any] | None,
+        model: str | None = None,
     ) -> str:
-        """Build system prompt with code blocks and analysis summary."""
+        """Build system prompt with sandwich structure: identity → context → guidelines."""
+        # TOP: Role identity
         parts = [
             "You are an expert software engineer and code analyst integrated with code-extract.",
             "Your expertise covers architecture, code quality, security, performance, and best practices.",
-            "",
-            "## Response Guidelines:",
-            "- Lead with the direct answer, then explain reasoning.",
-            "- Reference code by name, file path, and line range when possible.",
-            "- Use markdown: headers for sections, code blocks for snippets, bullets for lists.",
-            "- Explain both *what* the issue is and *why* it matters.",
-            "- Suggest concrete fixes with code examples when applicable.",
-            "- Consider language-specific idioms and best practices.",
+            "IMPORTANT: Always reference code by name and file path.",
         ]
 
+        # Model-specific annotations (F2)
+        if model == "deepseek-coder":
+            parts.append("Focus on code structure, implementation patterns, and architecture relationships.")
+
+        # MIDDLE: Code context
         if code_context:
             parts.append("\n## Code Context:")
             for i, block in enumerate(code_context[:MAX_CODE_BLOCKS]):
@@ -223,15 +231,33 @@ class DeepSeekService:
                 lang = block.get("language", "text")
                 fpath = block.get("file", "Unknown")
                 code = block.get("code", "")[:MAX_CODE_CHARS]
-                parts.append(
-                    f"\n### {i + 1}. {name}\n"
-                    f"Type: {btype} | Language: {lang} | File: {fpath}\n"
-                    f"```{lang}\n{code}\n```"
-                )
+                if model == "deepseek-coder":
+                    parts.append(
+                        f"\n### File: {fpath} — {name} ({btype})\n"
+                        f"Language: {lang}\n"
+                        f"```{lang}\n{code}\n```"
+                    )
+                else:
+                    parts.append(
+                        f"\n### {i + 1}. {name}\n"
+                        f"Type: {btype} | Language: {lang} | File: {fpath}\n"
+                        f"```{lang}\n{code}\n```"
+                    )
 
+        # MIDDLE: Analysis context
         if analysis_context:
             parts.append("\n## Analysis Context:")
             parts.append(self._format_analysis_context(analysis_context))
+
+        # BOTTOM: Response guidelines (sandwich — model pays most attention to start + end)
+        parts.append("")
+        parts.append("## Response Guidelines:")
+        parts.append("- Lead with the direct answer, then explain reasoning.")
+        parts.append("- Reference code by name, file path, and line range when possible.")
+        parts.append("- Use markdown: headers for sections, code blocks for snippets, bullets for lists.")
+        parts.append("- Explain both *what* the issue is and *why* it matters.")
+        parts.append("- Suggest concrete fixes with code examples when applicable.")
+        parts.append("- Consider language-specific idioms and best practices.")
 
         return "\n".join(parts)
 
@@ -274,7 +300,128 @@ class DeepSeekService:
                 except Exception:
                     pass
 
+    # ── Reasoner (no tools, no system message) ─────────────────────
+
+    def _build_reasoner_message(
+        self,
+        query: str,
+        scan_id: str,
+        code_context: list[dict[str, Any]] | None,
+        analysis_context: dict[str, Any] | None,
+        history_summary: str = "",
+    ) -> str:
+        """Build a single comprehensive user message for the Reasoner model."""
+        parts = [
+            "You are an expert code analyst. Analyze the following codebase information and answer the question.",
+        ]
+
+        # Pre-gather tool data
+        for tool_name, label in [
+            ("get_health_summary", "Health Summary"),
+            ("get_architecture_info", "Architecture Info"),
+            ("get_dead_code_list", "Dead Code"),
+        ]:
+            try:
+                result_text, _ = self._execute_tool(tool_name, scan_id, {})
+                if result_text and "error" not in result_text[:50].lower():
+                    parts.append(f"\n## {label}:\n{result_text[:1500]}")
+            except Exception:
+                pass
+
+        if code_context:
+            parts.append("\n## Code Context:")
+            for block in code_context[:MAX_CODE_BLOCKS]:
+                name = block.get("name", "Unknown")
+                lang = block.get("language", "text")
+                fpath = block.get("file", "Unknown")
+                code = block.get("code", "")[:MAX_CODE_CHARS]
+                parts.append(f"\n### {name} ({fpath})\n```{lang}\n{code}\n```")
+
+        if analysis_context:
+            parts.append("\n## Analysis Context:")
+            parts.append(self._format_analysis_context(analysis_context))
+
+        if history_summary:
+            parts.append(f"\n{history_summary}")
+
+        parts.append(f"\n---\n\n**Question:** {query}")
+        parts.append(
+            "\nProvide a thorough answer using markdown formatting. "
+            "Reference specific code by name and file path."
+        )
+        return "\n".join(parts)
+
+    async def _reasoner_chat(
+        self,
+        query: str,
+        scan_id: str,
+        history: list[dict[str, str]],
+        code_context: list[dict[str, Any]] | None = None,
+        analysis_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Single-shot chat for Reasoner model (no tools, no system message)."""
+        from .token_utils import estimate_messages_tokens
+
+        history_summary, _ = self._summarize_history(history)
+        content = self._build_reasoner_message(
+            query, scan_id, code_context, analysis_context, history_summary,
+        )
+        messages = [{"role": "user", "content": content}]
+
+        context_tokens = estimate_messages_tokens(messages)
+
+        try:
+            response = await self.client.post(
+                f"{self.config.base_url}/chat/completions",
+                json={
+                    "model": self.config.model.value,
+                    "messages": messages,
+                    "temperature": self.config.get_optimal_temperature(),
+                    "max_tokens": self.config.max_tokens,
+                    "stream": False,
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+        except Exception as e:
+            logger.exception("Reasoner API error: %s", e)
+            return {
+                "answer": f"Reasoner request failed: {e}",
+                "actions": [],
+                "model": self.config.model.value,
+                "usage": {},
+                "history_update": [],
+                "context_size": context_tokens,
+                "context_unit": "tokens" if has_tiktoken() else "chars_estimated",
+                "tool_calls_made": 0,
+            }
+
+        usage = data.get("usage", {})
+        model_name = data.get("model", self.config.model.value)
+        answer = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+        return {
+            "answer": answer,
+            "actions": [],
+            "model": model_name,
+            "usage": usage,
+            "history_update": [
+                {"role": "user", "content": query},
+                {"role": "assistant", "content": answer},
+            ],
+            "context_size": context_tokens,
+            "context_unit": "tokens" if has_tiktoken() else "chars_estimated",
+            "tool_calls_made": 0,
+        }
+
     # ── Agentic copilot ───────────────────────────────────────────
+
+    # Token budget limits per model (80% of context window)
+    TOKEN_LIMITS = {
+        "deepseek-chat": 64000,
+        "deepseek-coder": 128000,
+        "deepseek-reasoner": 128000,
+    }
 
     async def agent_chat(
         self,
@@ -292,8 +439,15 @@ class DeepSeekService:
         call with NO tools, guaranteeing a rich text answer.
 
         Returns:
-            {answer, actions, model, usage, history_update}
+            {answer, actions, model, usage, history_update,
+             context_size, context_unit, tool_calls_made}
         """
+        # Reasoner cannot use tools — single-shot path
+        if self.config.model == AIModel.DEEPSEEK_REASONER:
+            return await self._reasoner_chat(
+                query, scan_id, history, code_context, analysis_context,
+            )
+
         from .tool_bridge import get_openai_tool_definitions
 
         # Summarize older history to keep context window lean
@@ -303,21 +457,32 @@ class DeepSeekService:
             code_context=code_context,
             analysis_context=analysis_context,
             history_summary=history_summary,
+            model=self.config.model.value,
         )
         messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
         messages.extend(recent_history)
         messages.append({"role": "user", "content": query})
 
+        context_tokens = estimate_messages_tokens(messages)
+        context_unit = "tokens" if has_tiktoken() else "chars_estimated"
+
         all_actions: list[dict] = []
         tool_trace: list[dict[str, str]] = []
+        tool_calls_made = 0
         total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         model_name = self.config.model.value
+        budget = int(self.TOKEN_LIMITS.get(self.config.model.value, 64000) * 0.80)
 
         for iteration in range(MAX_TOOL_ITERATIONS):
+            # Token budget check — force synthesis if over budget
+            if estimate_messages_tokens(messages) > budget:
+                logger.info("token budget exceeded — forcing synthesis")
+                break
+
             request_body: dict[str, Any] = {
                 "model": self.config.model.value,
                 "messages": messages,
-                "temperature": self.config.temperature,
+                "temperature": self.config.get_tool_temperature(),
                 "max_tokens": self.config.max_tokens,
                 "stream": False,
                 "tools": get_openai_tool_definitions(),
@@ -374,6 +539,9 @@ class DeepSeekService:
                         {"role": "user", "content": query},
                         {"role": "assistant", "content": content},
                     ],
+                    "context_size": context_tokens,
+                    "context_unit": context_unit,
+                    "tool_calls_made": tool_calls_made,
                 }
 
             # Process tool calls
@@ -392,6 +560,7 @@ class DeepSeekService:
                 result_text, actions = self._execute_tool(tool_name, scan_id, arguments)
                 logger.debug("result: %d chars, %d actions", len(result_text), len(actions))
                 all_actions.extend(actions)
+                tool_calls_made += 1
 
                 tool_trace.append({
                     "tool": tool_name,
@@ -425,6 +594,9 @@ class DeepSeekService:
                 {"role": "user", "content": query},
                 {"role": "assistant", "content": answer},
             ],
+            "context_size": context_tokens,
+            "context_unit": context_unit,
+            "tool_calls_made": tool_calls_made,
         }
 
     async def _synthesize_answer(
@@ -466,7 +638,7 @@ class DeepSeekService:
                 json={
                     "model": self.config.model.value,
                     "messages": synth_messages,
-                    "temperature": self.config.temperature,
+                    "temperature": self.config.get_optimal_temperature(),
                     "max_tokens": self.config.max_tokens,
                     "stream": False,
                 },
@@ -527,8 +699,10 @@ class DeepSeekService:
         code_context: list[dict[str, Any]] | None = None,
         analysis_context: dict[str, Any] | None = None,
         history_summary: str = "",
+        model: str | None = None,
     ) -> str:
-        """System prompt for the agentic copilot with code and analysis context."""
+        """System prompt with sandwich structure: identity+caps → context → guidelines."""
+        # TOP: Identity + capabilities
         parts = [
             "You are an expert AI copilot integrated with code-extract, a code analysis and extraction tool.",
             "You are a skilled software engineer with deep expertise in architecture, code quality, security, and performance.",
@@ -543,28 +717,14 @@ class DeepSeekService:
             "and generate new code from templates by filling in variables.",
             "- **Workflows**: Clone items, add to remix board, build remix projects, "
             "run comparisons, smart-extract code with dependencies, apply migration patterns.",
-            "",
-            "## Guidelines:",
-            "- Use data tools to gather information before answering questions.",
-            "- Use UI action tools when the user wants to navigate or perform operations.",
-            "- For multi-step workflows (like cloning), use the appropriate workflow tool.",
-            "- If an item name is ambiguous, search first to find the exact match.",
-            "",
-            "## Response Format:",
-            "- Structure answers with markdown headers for multi-part responses.",
-            "- For health/architecture questions, lead with key metrics then details.",
-            "- Include code snippets when referencing specific functions or patterns.",
-            "- Present lists as tables or bullets for readability.",
-            "- Synthesize tool results into a narrative — don't just echo raw data.",
-            "- Reference items by name and file path (e.g. `func_name` in `path/file.py`).",
         ]
 
-        # Embed history summary if available
+        # MIDDLE: History summary
         if history_summary:
             parts.append("")
             parts.append(history_summary)
 
-        # Embed code context
+        # MIDDLE: Code context
         if code_context:
             parts.append("\n## Code Context:")
             for i, block in enumerate(code_context[:MAX_CODE_BLOCKS]):
@@ -579,12 +739,127 @@ class DeepSeekService:
                     f"```{lang}\n{code}\n```"
                 )
 
-        # Embed analysis context
+        # MIDDLE: Analysis context
         if analysis_context:
             parts.append("\n## Analysis Context:")
             parts.append(self._format_analysis_context(analysis_context))
 
+        # BOTTOM: Guidelines + Response Format (sandwich)
+        parts.append("")
+        parts.append("## Guidelines:")
+        parts.append("- Use data tools to gather information before answering questions.")
+        parts.append("- Use UI action tools when the user wants to navigate or perform operations.")
+        parts.append("- For multi-step workflows (like cloning), use the appropriate workflow tool.")
+        parts.append("- If an item name is ambiguous, search first to find the exact match.")
+        parts.append("")
+        parts.append("## Response Format:")
+        parts.append("- Structure answers with markdown headers for multi-part responses.")
+        parts.append("- For health/architecture questions, lead with key metrics then details.")
+        parts.append("- Include code snippets when referencing specific functions or patterns.")
+        parts.append("- Present lists as tables or bullets for readability.")
+        parts.append("- Synthesize tool results into a narrative — don't just echo raw data.")
+        parts.append("- Reference items by name and file path (e.g. `func_name` in `path/file.py`).")
+
         return "\n".join(parts)
+
+    async def structured_analyze(
+        self,
+        scan_id: str,
+        code_context: list[dict[str, Any]] | None = None,
+        analysis_context: dict[str, Any] | None = None,
+        focus: str | None = None,
+    ) -> dict[str, Any]:
+        """Structured JSON analysis — gathers data then synthesizes JSON."""
+        from .token_utils import truncate_to_tokens
+
+        # Phase 1: Data gathering
+        gathered: dict[str, str] = {}
+        tools_to_run = [
+            ("get_health_summary", "health"),
+            ("get_architecture_info", "architecture"),
+            ("get_dead_code_list", "dead_code"),
+        ]
+        for tool_name, key in tools_to_run:
+            if focus and key != focus:
+                continue
+            try:
+                result_text, _ = self._execute_tool(tool_name, scan_id, {})
+                if result_text and "error" not in result_text[:50].lower():
+                    gathered[key] = truncate_to_tokens(result_text, 600)
+            except Exception:
+                pass
+
+        # Phase 2: JSON synthesis
+        data_section = "\n".join(
+            f"## {k.replace('_', ' ').title()}:\n{v}" for k, v in gathered.items()
+        )
+
+        code_section = ""
+        if code_context:
+            parts = []
+            for block in code_context[:MAX_CODE_BLOCKS]:
+                name = block.get("name", "Unknown")
+                lang = block.get("language", "text")
+                code = block.get("code", "")[:MAX_CODE_CHARS]
+                parts.append(f"### {name}\n```{lang}\n{code}\n```")
+            code_section = "\n## Code:\n" + "\n".join(parts)
+
+        analysis_section = ""
+        if analysis_context:
+            analysis_section = "\n## Analysis:\n" + self._format_analysis_context(analysis_context)
+
+        system_prompt = (
+            "You are a code analysis engine. Respond with ONLY valid JSON in this exact schema:\n"
+            '{"summary": "string", "issues": [{"severity": "high|medium|low", "file": "string", '
+            '"line": 0, "type": "string", "description": "string", "fix": "string"}], '
+            '"recommendations": ["string"]}\n'
+            "Analyze the codebase data provided and identify issues and recommendations."
+        )
+
+        user_content = f"{data_section}{code_section}{analysis_section}"
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ]
+
+        try:
+            response = await self.client.post(
+                f"{self.config.base_url}/chat/completions",
+                json={
+                    "model": self.config.model.value,
+                    "messages": messages,
+                    "temperature": self.config.get_optimal_temperature(),
+                    "max_tokens": self.config.max_tokens,
+                    "stream": False,
+                    "response_format": {"type": "json_object"},
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+        except Exception as e:
+            return {
+                "analysis": {"summary": f"Analysis request failed: {e}", "issues": [], "recommendations": []},
+                "model": self.config.model.value,
+                "usage": {},
+                "gathered_data_keys": list(gathered.keys()),
+            }
+
+        usage = data.get("usage", {})
+        model_name = data.get("model", self.config.model.value)
+        raw_content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+        try:
+            analysis = json.loads(raw_content)
+        except (json.JSONDecodeError, TypeError):
+            analysis = {"summary": raw_content, "issues": [], "recommendations": []}
+
+        return {
+            "analysis": analysis,
+            "model": model_name,
+            "usage": usage,
+            "gathered_data_keys": list(gathered.keys()),
+        }
 
     async def close(self):
         """Clean up the HTTP client."""
