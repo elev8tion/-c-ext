@@ -22,6 +22,7 @@ from code_extract.web.api_tour import router as tour_router
 from code_extract.web.api_tools import router as tools_router
 from code_extract.web.api_remix import router as remix_router
 from code_extract.web.api_ai import router as ai_router
+from code_extract.web.api_tool_system import router as tool_system_router
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -48,6 +49,7 @@ def create_app() -> FastAPI:
     app.include_router(tools_router)
     app.include_router(remix_router)
     app.include_router(ai_router)
+    app.include_router(tool_system_router)
 
     # Static files (must be last — catches all unmatched routes)
     app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
