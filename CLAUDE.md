@@ -10,7 +10,7 @@ CLI + Web UI tool for extracting, analyzing, and exporting code blocks from any 
 # Activate venv
 source .venv/bin/activate
 
-# Run tests (279 tests, ~2s)
+# Run tests (363 tests, ~3s)
 python -m pytest tests/ --tb=short -q
 
 # Start web UI
@@ -51,9 +51,12 @@ code_extract/
 │       ├── index.html    # SPA shell (Tailwind utility classes)
 │       └── styles.css    # Liquid Glass Neon theme tokens + components
 ├── ai/
-│   ├── __init__.py           # Exports all phase modules + AIConfig/AIModel
-│   ├── service.py            # DeepSeek AI chat service
+│   ├── __init__.py           # Exports all phase modules + AIConfig/AIModel + temps
+│   ├── service.py            # DeepSeek AI chat service (agent, reasoner, structured)
 │   ├── tools.py              # Legacy tool definitions
+│   ├── token_utils.py        # Token counting (tiktoken optional, heuristic fallback)
+│   ├── rate_limiter.py       # Sliding-window rate limiter (per-key)
+│   ├── tool_bridge.py        # Legacy ↔ ToolSystem integration bridge
 │   ├── tool_registry.py      # Phase 1: Centralized tool registry + execution engine
 │   ├── tool_migration.py     # Phase 2: Legacy tool discovery + migration layer
 │   ├── tool_enhancement.py   # Phase 3: Context, dependencies, chains, validation
@@ -119,6 +122,66 @@ Six-layer tool infrastructure in `code_extract/ai/`:
 - `OrchestrationLayer` — top-level API with `orchestrate()`, `get_status()`, `add_policy()`, `optimize_system()`
 - `create_complete_system()` — factory that wires all phases together
 
+## AI Chat Features (F1–F9)
+
+Nine features enhancing AI chat response quality and system robustness:
+
+### F1 — Token Counting (`token_utils.py`)
+- `estimate_tokens(text)` / `truncate_to_tokens(text, max)` / `estimate_messages_tokens(msgs)` / `has_tiktoken()`
+- Uses `cl100k_base` encoding via tiktoken (optional); falls back to `len(text) / 3.5` heuristic
+- Lazy-loads encoder on first call; `tiktoken` is an optional dependency (`pip install code-extract[ai]`)
+
+### F2 — Model-Specific Prompting
+- **Coder** (`deepseek-coder`): File-path-emphasized code blocks (`### File: path — name (type)`), architecture focus line
+- **Reasoner** (`deepseek-reasoner`): No system messages, no tools — single-shot via `_reasoner_chat()` / `_build_reasoner_message()`; pre-gathers health/arch/dead_code data via `_execute_tool()`
+- `_build_messages()` folds system prompt into user message for Reasoner
+- `agent_chat()` early-returns to `_reasoner_chat()` when model is Reasoner
+
+### F3 — Per-Model Temperature
+- `OPTIMAL_TEMPS` dict: chat=0.7, coder=0.7, reasoner=0.6 (module-level in `__init__.py`)
+- `AIConfig.get_optimal_temperature()` — lookup by `self.model.value`, default 0.7
+- `AIConfig.get_tool_temperature()` — `max(0.1, optimal - 0.2)` for precise tool selection
+- Used in `agent_chat()` tool loop (tool temp), `_synthesize_answer()` and `chat_with_code()` (optimal temp)
+
+### F4 — Structured JSON Analysis (`POST /api/ai/structured`)
+- `DeepSeekService.structured_analyze()`: two-phase — data gathering via `_execute_tool()`, then JSON synthesis
+- Request model: `StructuredAnalysisRequest(scan_id, focus?, item_ids?, model?, api_key?)`
+- Focus filters: `"health"`, `"architecture"`, `"dead_code"` — gathers only that tool's data
+- Response: `{analysis: {summary, issues: [{severity, file, line, type, description, fix}], recommendations}, model, usage, gathered_data_keys}`
+- Uses `response_format: {"type": "json_object"}`; graceful fallback if JSON parse fails
+
+### F5 — Sandwich Prompt Structure
+- `_build_system_prompt()`: TOP (identity + "IMPORTANT: reference by name/path") → MIDDLE (code + analysis context) → BOTTOM (Response Guidelines)
+- `_build_agent_system_prompt()`: TOP (identity + capabilities) → MIDDLE (history + code + analysis) → BOTTOM (Guidelines + Response Format)
+- Exploits model attention pattern: strongest at start and end of prompt
+
+### F6 — Health-Aware Item Scoring
+- `_select_relevant_items()` accepts optional `analysis_context` parameter
+- Extracts `problematic_names` set from `health.long_functions`, `health.high_coupling`, and `dead_code`
+- Items matching problematic names get +3 bonus score
+- Callers in `chat_with_scan()` and `agent_chat_endpoint()` pass analysis context
+
+### F7 — Context Size in API Response
+- `agent_chat()` returns `context_size` (int), `context_unit` ("tokens" | "chars_estimated"), `tool_calls_made` (int)
+- Token budget check: `TOKEN_LIMITS = {chat: 64k, coder: 128k, reasoner: 128k}` × 0.80; breaks loop if exceeded
+- `chat_with_scan()` estimates context from code+analysis+query
+- `agent_chat_endpoint()` records `ai_context_size` metric in `ToolSystemHealth`
+- Frontend footer: `"deepseek-chat · 12.4k tokens · 3 tool calls"`
+
+### F8 — Server-Side Config Persistence
+- Config file: `~/.code-extract/.chat_config.json`
+- `_load_ai_config()` / `_save_ai_config()` helpers
+- `GET /api/ai/config` → `{api_key_set: bool, selected_model: str}` (never exposes raw key)
+- `POST /api/ai/config` → saves key + model; `"KEEP_EXISTING"` preserves key
+- Fallback: `chat_with_scan()` and `agent_chat_endpoint()` try persisted config if no key in request/env
+
+### F9 — Rate Limiting (`rate_limiter.py`)
+- `RateLimiter(max_requests=30, window_seconds=60)` — sliding window, per-key (scan_id)
+- `check(key) → (allowed, retry_after)` / `remaining(key) → int`
+- Thread-safe (`threading.Lock`), auto-prunes expired timestamps
+- `get_rate_limiter()` singleton; applied to `chat_with_scan()`, `agent_chat_endpoint()`, `structured_analysis()`
+- Returns HTTP 429 with `Retry-After` header when exceeded
+
 ## Frontend (app.js) Key Patterns
 
 - **Single IIFE** — all state and functions inside `const app = (() => { ... })()`, public API returned at bottom
@@ -153,10 +216,16 @@ Six-layer tool infrastructure in `code_extract/ai/`:
 ## Tests
 
 ```bash
-python -m pytest tests/ -q                    # all 279 tests
-python -m pytest tests/test_analysis.py       # architecture, health, dead-code, catalog, tour
-python -m pytest tests/test_web_analysis_api.py  # API integration tests
-python -m pytest tests/test_tool_system.py    # tool system phases 1-6 (107 tests)
+python -m pytest tests/ -q                        # all 363 tests
+python -m pytest tests/test_analysis.py           # architecture, health, dead-code, catalog, tour
+python -m pytest tests/test_web_analysis_api.py   # API integration tests
+python -m pytest tests/test_tool_system.py        # tool system phases 1-6 (107 tests)
+python -m pytest tests/test_ai.py                 # AI config, service, prompts, scoring (27 tests)
+python -m pytest tests/test_ai_agent.py           # agent tools, service, API, reasoner (31 tests)
+python -m pytest tests/test_token_utils.py        # token counting + truncation (14 tests)
+python -m pytest tests/test_rate_limiter.py       # rate limiter sliding window (8 tests)
+python -m pytest tests/test_ai_config_persistence.py  # config save/load/endpoints (6 tests)
+python -m pytest tests/test_structured_analysis.py    # structured JSON endpoint (5 tests)
 ```
 
 ## Conventions
