@@ -17,8 +17,8 @@ class AIModel(Enum):
 class AIConfig:
     api_key: str = ""
     model: AIModel = AIModel.DEEPSEEK_CODER
-    temperature: float = 0.1
-    max_tokens: int = 4000
+    temperature: float = 0.3
+    max_tokens: int = 6000
     base_url: str = "https://api.deepseek.com/v1"
 
     def __post_init__(self):
@@ -66,4 +66,11 @@ from .tool_orchestration import (
     OrchestrationMode, OptimizationStrategy, SystemEventType,
     SystemEvent, OrchestrationPolicy, OrchestrationResult,
     create_orchestration_layer, create_complete_system,
+)
+
+# Tool Bridge — legacy ↔ ToolSystem integration
+from .tool_bridge import (
+    register_legacy_tools,
+    get_openai_tool_definitions,
+    create_integrated_tool_system,
 )

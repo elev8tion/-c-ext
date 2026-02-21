@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
+import threading
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -14,6 +14,121 @@ from pydantic import BaseModel
 from code_extract.web.state import state
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
+
+
+def _select_relevant_items(
+    blocks: dict, query: str, limit: int = 20
+) -> list[str]:
+    """Score items by relevance to the query, return top *limit* IDs."""
+    if not blocks or not query:
+        return list(blocks.keys())[:limit] if blocks else []
+
+    query_lower = query.lower()
+    words = query_lower.split()
+    scored: list[tuple[str, float]] = []
+
+    for item_id, block in blocks.items():
+        score = 0.1  # baseline
+        name = (block.item.qualified_name or "").lower()
+        btype = (block.item.block_type.value or "").lower()
+        lang = (block.item.language.value or "").lower()
+        fpath = str(block.item.file_path or "").lower()
+
+        for w in words:
+            if w in name:
+                score += 10 if w == name or w == name.split(".")[-1] else 5
+            if w in btype:
+                score += 2
+            if w in lang:
+                score += 1
+            if w in fpath:
+                score += 3
+        scored.append((item_id, score))
+
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return [item_id for item_id, _ in scored[:limit]]
+
+
+def _build_analysis_context(scan_id: str) -> dict:
+    """Build enriched analysis context for a scan, fetching all available analyses."""
+    ctx: dict = {}
+
+    health = state.get_analysis(scan_id, "health")
+    if health:
+        ctx["health"] = health
+
+    graph = state.get_analysis(scan_id, "graph")
+    if graph:
+        ctx["dependencies"] = graph
+
+    dead = state.get_analysis(scan_id, "deadcode")
+    if dead:
+        ctx["dead_code"] = dead
+
+    # Architecture summary (stats + module list only, not full elements)
+    arch = state.get_analysis(scan_id, "architecture")
+    if arch and isinstance(arch, dict):
+        ctx["architecture"] = {
+            "stats": arch.get("stats", {}),
+            "modules": [m.get("name", m.get("id", "")) for m in arch.get("modules", [])],
+        }
+
+    # Catalog summary (type distribution)
+    catalog = state.get_analysis(scan_id, "catalog")
+    if catalog and isinstance(catalog, dict):
+        items = catalog.get("items", [])
+        type_dist: dict[str, int] = {}
+        for item in items:
+            t = item.get("type", "unknown") if isinstance(item, dict) else "unknown"
+            type_dist[t] = type_dist.get(t, 0) + 1
+        ctx["catalog"] = {"total": len(items), "types": type_dist}
+
+    # Tour summary (step count + first entry points)
+    tour = state.get_analysis(scan_id, "tour")
+    if tour and isinstance(tour, dict):
+        steps = tour.get("steps", [])
+        entries = [
+            s.get("title", s.get("name", ""))
+            for s in steps[:3]
+            if isinstance(s, dict)
+        ]
+        ctx["tour"] = {"step_count": len(steps), "entry_points": entries}
+
+    return ctx
+
+
+# ── Lazy tool system singleton ──────────────────────────────────────
+
+_tool_system_lock = threading.Lock()
+_tool_system_instance = None
+_intelligence_instance = None
+
+
+def _get_tool_system():
+    """Return ``(tool_system, intelligence)`` — created once, thread-safe.
+
+    Returns ``(None, None)`` on failure so the service falls back to
+    direct tool execution via ``tools.execute_tool()``.
+    """
+    global _tool_system_instance, _intelligence_instance
+    if _tool_system_instance is not None:
+        return _tool_system_instance, _intelligence_instance
+
+    with _tool_system_lock:
+        # Double-check after acquiring the lock
+        if _tool_system_instance is not None:
+            return _tool_system_instance, _intelligence_instance
+        try:
+            from code_extract.ai.tool_bridge import create_integrated_tool_system
+            _tool_system_instance, _intelligence_instance = (
+                create_integrated_tool_system()
+            )
+            logger.info("Tool system initialized for agent endpoint")
+        except Exception:
+            logger.exception("Failed to initialize tool system — falling back")
+            return None, None
+
+    return _tool_system_instance, _intelligence_instance
 
 
 class ChatRequest(BaseModel):
@@ -63,7 +178,7 @@ async def chat_with_scan(req: ChatRequest):
     code_context = []
 
     if blocks:
-        items_to_include = req.item_ids or list(blocks.keys())[:20]
+        items_to_include = req.item_ids or _select_relevant_items(blocks, req.query)
         for item_id in items_to_include:
             block = blocks.get(item_id)
             if not block:
@@ -81,15 +196,7 @@ async def chat_with_scan(req: ChatRequest):
     # Build analysis context
     analysis_context = {}
     if req.include_analysis:
-        health = state.get_analysis(req.scan_id, "health")
-        if health:
-            analysis_context["health"] = health
-        graph = state.get_analysis(req.scan_id, "graph")
-        if graph:
-            analysis_context["dependencies"] = graph
-        dead = state.get_analysis(req.scan_id, "dead_code")
-        if dead:
-            analysis_context["dead_code"] = dead
+        analysis_context = _build_analysis_context(req.scan_id)
 
     # Call DeepSeek
     service = DeepSeekService(config)
@@ -144,7 +251,7 @@ async def clear_chat_history(scan_id: str):
 
 # ── Agentic Copilot ────────────────────────────────────────────────
 
-MAX_AGENT_HISTORY_TURNS = 5
+MAX_AGENT_HISTORY_TURNS = 10
 
 
 @router.post("/agent")
@@ -174,11 +281,11 @@ async def agent_chat_endpoint(req: AgentChatRequest):
             detail="DeepSeek API key not configured. Set the DEEPSEEK_API_KEY environment variable.",
         )
 
-    # Build code context (same as /api/ai/chat)
+    # Build code context
     blocks = state.get_blocks_for_scan(req.scan_id)
     code_context = []
     if blocks:
-        items_to_include = req.item_ids or list(blocks.keys())[:20]
+        items_to_include = req.item_ids or _select_relevant_items(blocks, req.query)
         for item_id in items_to_include:
             block = blocks.get(item_id)
             if not block:
@@ -193,17 +300,8 @@ async def agent_chat_endpoint(req: AgentChatRequest):
                 "code": block.source_code[:limit],
             })
 
-    # Build analysis context (same as /api/ai/chat)
-    analysis_context = {}
-    health = state.get_analysis(req.scan_id, "health")
-    if health:
-        analysis_context["health"] = health
-    graph = state.get_analysis(req.scan_id, "graph")
-    if graph:
-        analysis_context["dependencies"] = graph
-    dead = state.get_analysis(req.scan_id, "dead_code")
-    if dead:
-        analysis_context["dead_code"] = dead
+    # Build analysis context
+    analysis_context = _build_analysis_context(req.scan_id)
 
     logger.info(
         "[agent-endpoint] model=%s, code_blocks=%d, analysis_keys=%s, query=%.80s",
@@ -215,7 +313,12 @@ async def agent_chat_endpoint(req: AgentChatRequest):
     # Load agent conversation history (last N turns)
     history = state.get_analysis(req.scan_id, "agent_history") or []
 
-    service = DeepSeekService(config)
+    tool_system, intelligence = _get_tool_system()
+    service = DeepSeekService(
+        config,
+        tool_system=tool_system,
+        intelligence=intelligence,
+    )
     try:
         result = await service.agent_chat(
             query=req.query,

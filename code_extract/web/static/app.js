@@ -3659,6 +3659,28 @@ const app = (() => {
   // AI COPILOT — Floating Widget + Agent
   // ═══════════════════════════════════════════════
 
+  let _agentHistoryLoaded = false;
+
+  async function _loadAgentHistory() {
+    if (!currentScan) return;
+    const container = $('#ai-widget-messages');
+    if (!container || container.children.length > 0) return;
+    try {
+      const res = await fetch(`/api/ai/agent/history/${currentScan.scan_id}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const history = data.history || [];
+      for (const msg of history) {
+        if (msg.role === 'user' || msg.role === 'assistant') {
+          _aiWidgetAddMessage(msg.role, msg.content || '');
+        }
+      }
+      _agentHistoryLoaded = true;
+    } catch (e) {
+      // Silently ignore — history is optional
+    }
+  }
+
   function toggleAIWidget() {
     const widget = $('#ai-widget');
     if (!widget) return;
@@ -3674,6 +3696,8 @@ const app = (() => {
       const savedKey = localStorage.getItem(AI_KEY_STORAGE) || '';
       const keyInput = $('#ai-api-key');
       if (keyInput && savedKey && !keyInput.value) keyInput.value = savedKey;
+      // Load prior conversation if widget is empty
+      if (!_agentHistoryLoaded) _loadAgentHistory();
       // Focus input
       const input = $('#ai-agent-input');
       if (input) setTimeout(() => input.focus(), 100);

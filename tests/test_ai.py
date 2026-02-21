@@ -27,8 +27,8 @@ class TestAIConfig:
     def test_default_config(self):
         config = AIConfig()
         assert config.model == AIModel.DEEPSEEK_CODER
-        assert config.temperature == 0.1
-        assert config.max_tokens == 4000
+        assert config.temperature == 0.3
+        assert config.max_tokens == 6000
         assert "deepseek.com" in config.base_url
 
     def test_custom_model(self):
@@ -47,7 +47,7 @@ class TestDeepSeekService:
     def test_build_system_prompt_empty(self):
         service = DeepSeekService(AIConfig(api_key="test"))
         prompt = service._build_system_prompt([], None)
-        assert "code analysis assistant" in prompt
+        assert "expert software engineer" in prompt
         assert "Code Context" not in prompt
 
     def test_build_system_prompt_with_code(self):
@@ -68,8 +68,8 @@ class TestDeepSeekService:
         service = DeepSeekService(AIConfig(api_key="test"))
         analysis = {
             "health": {"score": 85},
-            "dependencies": [1, 2, 3],
-            "dead_code": [1],
+            "dependencies": {"a": {}, "b": {}, "c": {}},
+            "dead_code": [{"name": "unused_fn", "type": "function", "confidence": 0.9, "reason": "unused"}],
         }
         prompt = service._build_system_prompt([], analysis)
         assert "85" in prompt
